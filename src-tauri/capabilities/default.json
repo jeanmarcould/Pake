@@ -3,6 +3,11 @@
   "identifier": "pake-capability",
   "description": "Capability for the pake app.",
   "webviews": ["pake", "pake-*"],
+  "remote": {
+    "urls": [
+      "https://*.google.com/*"
+    ]
+  },
   "permissions": [
     "allow-download-file",
     "allow-send-notification",
