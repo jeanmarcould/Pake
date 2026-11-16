@@ -35,6 +35,8 @@ use windows_sys::Win32::UI::{
 
 use tauri::Theme;
 
+use tauri_plugin_opener::OpenerExt;
+
 #[cfg(target_os = "macos")]
 use tauri::TitleBarStyle;
 
@@ -660,13 +662,32 @@ fn build_window(
 
     {
         let allow_new_window = window_config.new_window;
+        let app_host: Option<String> = tauri::Url::parse(&window_config.url)
+            .ok()
+            .and_then(|parsed| {
+                // Extract the target app's host from ?continue=... when packaged via ServiceLogin,
+                // otherwise fall back to the startup URL's own host.
+                let continue_host = parsed
+                    .query_pairs()
+                    .find(|(k, _)| k == "continue")
+                    .and_then(|(_, v)| tauri::Url::parse(&v).ok())
+                    .and_then(|u| u.host_str().map(str::to_owned));
+                continue_host.or_else(|| parsed.host_str().map(str::to_owned))
+            });
         let app_handle = app.clone();
         let popup_config = config.clone();
         let popup_tauri_config = tauri_config.clone();
         window_builder = window_builder.on_new_window(move |target_url, features| {
+            let is_same_app = app_host
+                .as_deref()
+                .is_some_and(|host| target_url.host_str() == Some(host));
+
             // Even without --new-window, two-stage popups need a real webview
             // with our download delegate, never a proxy for the main window.
-            if !allow_new_window && !is_blank_popup_url(&target_url) {
+            if !allow_new_window && !is_blank_popup_url(&target_url) && !is_same_app {
+                if matches!(target_url.scheme(), "http" | "https" | "mailto") {
+                    let _ = app_handle.opener().open_url(target_url.as_str(), None::<&str>);
+                }
                 return NewWindowResponse::Deny;
             }
             match open_requested_window(
@@ -685,6 +706,21 @@ fn build_window(
         });
     }
 
+    window_builder = window_builder.on_document_title_changed(|window, title| {
+        #[cfg(target_os = "windows")]
+        {
+            let count = extract_unread_count(&title);
+            if count > 0 {
+                let rgba = render_badge_rgba(count);
+                let icon = tauri::image::Image::new(&rgba, 32, 32);
+                let _ = window.set_overlay_icon(Some(icon));
+            } else {
+                let _ = window.set_overlay_icon(None);
+            }
+        }
+        let _ = (&window, &title);
+    });
+    
     // Add initialization scripts. Order matters: pakeConfig must land before
     // any script that reads it, and toast must register `window.pakeToast`
     // before Rust code calls show_toast().
@@ -1188,6 +1224,108 @@ mod proxy_arg_tests {
         // for http/socks5 today.
         assert!(build_proxy_browser_arg(&parse("https://proxy.local:8443")).is_none());
     }
+}
+
+#[cfg(target_os = "windows")]
+fn extract_unread_count(title: &str) -> u32 {
+    let mut chars = title.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '(' {
+            let mut num = String::new();
+            while let Some(&d) = chars.peek() {
+                if d.is_ascii_digit() {
+                    num.push(d);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            if !num.is_empty() && chars.peek() == Some(&')') {
+                if let Ok(n) = num.parse::<u32>() {
+                    if n > 0 {
+                        return n;
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+#[cfg(target_os = "windows")]
+fn render_badge_rgba(count: u32) -> Vec<u8> {
+    const SIZE: usize = 32;
+    let mut rgba = vec![0u8; SIZE * SIZE * 4];
+    let center = (SIZE as f32 - 1.0) / 2.0;
+
+    // Google-red circle (#D93025) with subtle white edge
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let dx = x as f32 - center;
+            let dy = y as f32 - center;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let idx = (y * SIZE + x) * 4;
+            if dist <= 14.5 {
+                rgba[idx] = 217;
+                rgba[idx + 1] = 48;
+                rgba[idx + 2] = 37;
+                rgba[idx + 3] = 255;
+            } else if dist <= 15.5 {
+                let alpha = ((15.5 - dist) * 255.0) as u8;
+                rgba[idx] = 255;
+                rgba[idx + 1] = 255;
+                rgba[idx + 2] = 255;
+                rgba[idx + 3] = alpha;
+            }
+        }
+    }
+
+    // 5x7 bitmap glyphs for 1-9 and '+'
+    const GLYPHS: &[(char, [u8; 7])] = &[
+        ('1', [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110]),
+        ('2', [0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111]),
+        ('3', [0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110]),
+        ('4', [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010]),
+        ('5', [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110]),
+        ('6', [0b01110, 0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110]),
+        ('7', [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000]),
+        ('8', [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110]),
+        ('9', [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110]),
+        ('+', [0b00000, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0b00000]),
+    ];
+
+    let label = if count > 9 { "9+".to_string() } else { count.to_string() };
+    let chars: Vec<char> = label.chars().collect();
+    let total_w = chars.len() * 10 + (chars.len().saturating_sub(1)) * 2;
+    let start_x = (SIZE - total_w) / 2;
+    let start_y = (SIZE - 14) / 2;
+
+    for (ci, ch) in chars.iter().enumerate() {
+        if let Some((_, rows)) = GLYPHS.iter().find(|(c, _)| c == ch) {
+            let ox = start_x + ci * 12;
+            for (ry, row) in rows.iter().enumerate() {
+                for rx in 0..5 {
+                    if (row >> (4 - rx)) & 1 == 1 {
+                        for dy in 0..2 {
+                            for dx in 0..2 {
+                                let px = ox + rx * 2 + dx;
+                                let py = start_y + ry * 2 + dy;
+                                if px < SIZE && py < SIZE {
+                                    let idx = (py * SIZE + px) * 4;
+                                    rgba[idx] = 255;
+                                    rgba[idx + 1] = 255;
+                                    rgba[idx + 2] = 255;
+                                    rgba[idx + 3] = 255;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    rgba
 }
 
 #[cfg(all(test, target_os = "windows"))]
