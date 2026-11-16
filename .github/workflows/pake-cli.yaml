@@ -225,7 +225,7 @@ jobs:
             $args += "--new-window"
           }
 
-          $args += "--show-system-tray", "--hide-on-close", "--password-autosave", "--no-restore-last-url"
+          $args += "--show-system-tray", "--hide-on-close", "--password-autosave", "--no-restore-last-url", "--inject", "unread-badge.js"
           
           Write-Host "Running: node dist/cli.js $($args -join ' ')"
           node dist/cli.js $args
