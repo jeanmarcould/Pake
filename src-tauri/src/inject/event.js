@@ -1000,6 +1000,42 @@ document.addEventListener("DOMContentLoaded", () => {
     routeFrameLink(source, href);
   }
 
+// Bridge Web App Badging API (used by Google Chat) to document.title for Rust's native badge hook
+  if ("setAppBadge" in navigator) {
+    let appBadgeCount = 0;
+    const syncBadgeTitle = () => {
+      const cleanTitle = document.title.replace(/^\(\d+\)\s*/, "");
+      const desiredTitle = appBadgeCount > 0 ? `(${appBadgeCount}) ${cleanTitle}` : cleanTitle;
+      if (document.title !== desiredTitle) {
+        document.title = desiredTitle;
+      }
+    };
+
+    navigator.setAppBadge = async (count = 1) => {
+      appBadgeCount = Number.isFinite(count) && count > 0 ? Math.floor(count) : 1;
+      syncBadgeTitle();
+    };
+
+    navigator.clearAppBadge = async () => {
+      appBadgeCount = 0;
+      syncBadgeTitle();
+    };
+
+    const attachTitleObserver = () => {
+      const target = document.querySelector("title") || document.head;
+      if (!target) return;
+      new MutationObserver(() => {
+        if (appBadgeCount > 0) syncBadgeTitle();
+      }).observe(target, { childList: true, subtree: true, characterData: true });
+    };
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", attachTitleObserver, { once: true });
+    } else {
+      attachTitleObserver();
+    }
+  }
+  
   // Set the default zoom, There are problems with Loop without using try-catch.
   try {
     setDefaultZoom();
