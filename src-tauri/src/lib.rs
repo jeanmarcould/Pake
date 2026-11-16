@@ -352,21 +352,34 @@ pub fn run_app() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init()); // Add this
 
-    // Only add single instance plugin if multiple instances are not allowed
+// Only add single instance plugin if multiple instances are not allowed
     if !multi_instance {
         let instance_revealed = startup_window_revealed.clone();
         app_builder = app_builder.plugin(tauri_plugin_single_instance::init(
-            move |app, _args, _cwd| {
-                if multi_window {
+            move |app, args, _cwd| {
+                let is_toast_activation = args
+                    .iter()
+                    .any(|arg| arg.to_ascii_lowercase().contains("toastactivated"));
+
+                if multi_window && !is_toast_activation {
                     open_additional_window_safe(app);
                 } else if let Some(window) = app.get_webview_window("pake") {
                     cancel_startup_reveal(&instance_revealed);
-                    let _ = window.unminimize();
                     let _ = window.show();
+                    let _ = window.unminimize();
                     reapply_window_icon(&window);
-                    #[cfg(target_os = "macos")]
-                    enter_configured_fullscreen(&window);
-                    let _ = window.set_focus();
+                    #[cfg(target_os = "windows")]
+                    {
+                        let _ = window.set_always_on_top(true);
+                        let _ = window.set_focus();
+                        let _ = window.set_always_on_top(false);
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        #[cfg(target_os = "macos")]
+                        enter_configured_fullscreen(&window);
+                        let _ = window.set_focus();
+                    }
                 }
             },
         ));
