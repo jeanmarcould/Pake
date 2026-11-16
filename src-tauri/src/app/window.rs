@@ -1262,6 +1262,10 @@ fn extract_unread_count(title: &str) -> u32 {
             }
         }
     }
+    let trimmed = title.trim_start();
+    if trimmed.starts_with('•') || trimmed.starts_with('●') {
+        return 1;
+    }
     0
 }
 
