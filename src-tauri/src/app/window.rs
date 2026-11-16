@@ -660,13 +660,11 @@ fn build_window(
     // HTML5 drag and drop on Windows; nothing in Pake consumes its events.
     window_builder = window_builder.disable_drag_drop_handler();
 
-    {
+   {
         let allow_new_window = window_config.new_window;
         let app_host: Option<String> = tauri::Url::parse(&window_config.url)
             .ok()
             .and_then(|parsed| {
-                // Extract the target app's host from ?continue=... when packaged via ServiceLogin,
-                // otherwise fall back to the startup URL's own host.
                 let continue_host = parsed
                     .query_pairs()
                     .find(|(k, _)| k == "continue")
@@ -682,11 +680,26 @@ fn build_window(
                 .as_deref()
                 .is_some_and(|host| target_url.host_str() == Some(host));
 
-            // Even without --new-window, two-stage popups need a real webview
-            // with our download delegate, never a proxy for the main window.
             if !allow_new_window && !is_blank_popup_url(&target_url) && !is_same_app {
                 if matches!(target_url.scheme(), "http" | "https" | "mailto") {
-                    let _ = app_handle.opener().open_url(target_url.as_str(), None::<&str>);
+                    let url_str = target_url.to_string();
+                    let opener_handle = app_handle.clone();
+                    std::thread::spawn(move || {
+                        #[cfg(target_os = "windows")]
+                        {
+                            use std::os::windows::process::CommandExt;
+                            const CREATE_NO_WINDOW: u32 = 0x08000000;
+                            if std::process::Command::new("rundll32.exe")
+                                .args(["url.dll,FileProtocolHandler", &url_str])
+                                .creation_flags(CREATE_NO_WINDOW)
+                                .spawn()
+                                .is_ok()
+                            {
+                                return;
+                            }
+                        }
+                        let _ = opener_handle.opener().open_url(&url_str, None::<&str>);
+                    });
                 }
                 return NewWindowResponse::Deny;
             }
