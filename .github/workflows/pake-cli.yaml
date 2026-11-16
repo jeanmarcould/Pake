@@ -190,7 +190,7 @@ jobs:
 
           # Empty environment variables are unset on Windows, so test for null too.
           if (-not [string]::IsNullOrEmpty($env:INPUT_ICON)) {
-            $args += "--icon", $env:INPUT_ICON
+            $args += "--icon", $env:INPUT_ICON, "--system-tray-icon", $env:INPUT_ICON
           }
 
           if (-not [string]::IsNullOrEmpty($env:INPUT_WIDTH)) {
