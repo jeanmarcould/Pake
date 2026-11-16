@@ -840,6 +840,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const isInternalUrl = (url) => matchesInternalUrl(url, window.location.href);
 
+ const openViaNativeWindow = (url) => {
+    originalWindowOpen.call(window, url, "_blank");
+  };
+
   const detectAnchorElementClick = (e) => {
     // Safety check: ensure e.target exists and is an Element with closest method
     if (!e.target || typeof e.target.closest !== "function") {
@@ -883,50 +887,14 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      // Handle _blank links: internal links stay in-app, external links open in the system browser
+      // Let Rust's on_new_window handler route _blank links:
+      // same-app hosts open in a new Pake window, external hosts open in the system browser.
       if (target === "_blank") {
         if (forceInternalNavigation) {
           e.preventDefault();
           e.stopImmediatePropagation();
           window.location.href = absoluteUrl;
-          return;
         }
-
-        if (isInternalUrl(absoluteUrl)) {
-          // With --new-window the Rust on_new_window handler opens an in-app
-          // window. Without it, leaving target="_blank" untouched lets the
-          // native webview escalate the click to a system-browser "new window".
-          //
-          // Many SPAs (e.g. Plane) tag in-app links with target="_blank" but
-          // route the click themselves via a React onClick that calls
-          // preventDefault + client-side navigation. Forcing a full
-          // window.location reload here (and stopping propagation) would defeat
-          // that handler and reload the whole app on every click. Instead,
-          // retarget the link to "_self" so the webview never opens a browser
-          // window, then let the page's own handler run. If nothing intercepts
-          // the click, the default _self navigation keeps it inside the app.
-          if (!window.pakeConfig?.new_window) {
-            anchorElement.target = "_self";
-          }
-          return;
-        }
-
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        handleExternalLink(absoluteUrl);
-        return;
-      }
-
-      if (target === "_new") {
-        if (forceInternalNavigation) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          window.location.href = absoluteUrl;
-          return;
-        }
-
-        e.preventDefault();
-        handleExternalLink(absoluteUrl);
         return;
       }
 
@@ -946,7 +914,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      // Handle regular links: internal URLs allow normal navigation, external links open in the system browser
+      // Handle regular links: internal URLs allow normal navigation, external links route through Rust
       if (!target || target === "_self") {
         // Optimization: Allow previewable media to be handled by the app/browser directly
         // This fixes issues where CDN links are treated as external
@@ -961,14 +929,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
           e.preventDefault();
           e.stopImmediatePropagation();
-          handleExternalLink(absoluteUrl);
+          openViaNativeWindow(absoluteUrl);
         }
       }
     }
   };
 
   window.addEventListener("click", (event) =>
-    handleProtocolLinkClick(event, handleExternalLink),
+    handleProtocolLinkClick(event, openViaNativeWindow),
   );
 
   // Capture web links before site popup handlers route them into the app.
@@ -1004,28 +972,11 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
+    // Delegate all other popups to Rust's on_new_window handler:
+    // same-app hosts open in a new Pake window, external hosts open in the system browser.
     try {
       const baseUrl = window.location.origin + window.location.pathname;
-      const hrefUrl = new URL(url, baseUrl);
-      const absoluteUrl = hrefUrl.href;
-
-      if (!isInternalUrl(absoluteUrl)) {
-        if (forceInternalNavigation) {
-          return originalWindowOpen.call(window, absoluteUrl, name, specs);
-        }
-
-        handleExternalLink(absoluteUrl);
-        return null;
-      }
-
-      // With --new-window the native handler opens an in-app window; without it,
-      // originalWindowOpen would route the internal target to the system browser
-      // and strand SSO callbacks, so navigate in place instead.
-      if (!window.pakeConfig?.new_window) {
-        window.location.href = absoluteUrl;
-        return window;
-      }
-
+      const absoluteUrl = new URL(url, baseUrl).href;
       return originalWindowOpen.call(window, absoluteUrl, name, specs);
     } catch (error) {
       return originalWindowOpen.call(window, url, name, specs);
@@ -1043,7 +994,7 @@ document.addEventListener("DOMContentLoaded", () => {
     ) {
       return;
     }
-    handleExternalLink(url);
+    openViaNativeWindow(url);
   };
   for (const { source, href } of pendingFrameLinks.splice(0)) {
     routeFrameLink(source, href);
