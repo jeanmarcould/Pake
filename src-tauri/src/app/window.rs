@@ -277,7 +277,16 @@ fn open_requested_window(
     let title = target_url.host_str().unwrap_or(target_url.as_str());
     let _ = window.set_title(title);
     reapply_window_icon(&window);
-    let _ = window.set_focus();
+    #[cfg(target_os = "windows")]
+    {
+        let _ = window.set_always_on_top(true);
+        let _ = window.set_focus();
+        let _ = window.set_always_on_top(false);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window.set_focus();
+    }
 
     Ok(window)
 }
