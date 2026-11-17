@@ -976,7 +976,19 @@ document.addEventListener("DOMContentLoaded", () => {
     // same-app hosts open in a new Pake window, external hosts open in the system browser.
     try {
       const baseUrl = window.location.origin + window.location.pathname;
-      const absoluteUrl = new URL(url, baseUrl).href;
+      const parsedUrl = new URL(url, baseUrl);
+      const absoluteUrl = parsedUrl.href;
+
+      // Block automatic popups fired by OS notification clicks (no active DOM gesture)
+      // so CustomActivator simply brings the main window to the front.
+      if (
+        parsedUrl.origin === window.location.origin &&
+        navigator.userActivation &&
+        !navigator.userActivation.isActive
+      ) {
+        return window;
+      }
+
       return originalWindowOpen.call(window, absoluteUrl, name, specs);
     } catch (error) {
       return originalWindowOpen.call(window, url, name, specs);
