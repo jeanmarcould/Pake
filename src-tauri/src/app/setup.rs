@@ -82,7 +82,7 @@ pub fn set_system_tray(
 
     let menu_revealed = startup_revealed.clone();
     let click_revealed = startup_revealed;
-    let mut tray_builder = TrayIconBuilder::new()
+    let mut tray_builder = TrayIconBuilder::with_id("pake-tray")
         .menu(&menu)
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "tray_new_window" => {
@@ -135,6 +135,7 @@ pub fn set_system_tray(
     };
 
     if let Some(icon) = resolved_icon {
+        crate::app::invoke::register_base_tray_icon(icon.to_owned());
         tray_builder = tray_builder.icon(icon);
     } else {
         eprintln!("[Pake] No tray icon available; tray will build without an icon.");
