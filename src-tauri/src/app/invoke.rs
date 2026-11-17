@@ -44,6 +44,24 @@ fn apply_badge(app: &AppHandle, count: Option<i64>) -> Result<(), String> {
     apply_badge_label(app, label.as_deref())
 }
 
+#[cfg(target_os = "macos")]
+fn apply_badge_label(app: &AppHandle, label: Option<&str>) -> Result<(), String> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+    use objc2_foundation::NSString;
+
+    let label = label.map(str::to_owned);
+    app.run_on_main_thread(move || {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let dock_tile = NSApplication::sharedApplication(mtm).dockTile();
+        let ns_label = label.as_deref().map(NSString::from_str);
+        dock_tile.setBadgeLabel(ns_label.as_deref());
+    })
+    .map_err(|e| format!("Failed to dispatch dock badge update: {e}"))
+}
+
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn apply_badge_label(app: &AppHandle, label: Option<&str>) -> Result<(), String> {
     let window = app
@@ -69,7 +87,7 @@ fn make_tray_badged_icon(base: &tauri::image::Image<'_>) -> tauri::image::Image<
     let h = base.height();
     let mut rgba = base.rgba().to_vec();
     if w == 0 || h == 0 || rgba.len() < (w * h * 4) as usize {
-        return base.to_owned();
+        return tauri::image::Image::new_owned(rgba, w, h);
     }
 
     let r = (w as f32 * 0.27).max(4.0);
@@ -103,7 +121,7 @@ fn update_tray_badge(app: &AppHandle, has_unread: bool) {
             let icon = if has_unread {
                 make_tray_badged_icon(base)
             } else {
-                base.to_owned()
+                base.clone()
             };
             let _ = tray.set_icon(Some(icon));
         }
@@ -228,17 +246,6 @@ fn apply_badge_label(app: &AppHandle, label: Option<&str>) -> Result<(), String>
     window
         .set_overlay_icon(overlay)
         .map_err(|e| format!("Failed to set taskbar overlay icon: {e}"))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn apply_badge_label(app: &AppHandle, label: Option<&str>) -> Result<(), String> {
-    let window = app
-        .get_webview_window("pake")
-        .ok_or("Main window not found")?;
-    let count = label.and_then(|s| s.parse::<i64>().ok());
-    window
-        .set_badge_count(count)
-        .map_err(|e| format!("Failed to set badge count: {e}"))
 }
 
 pub fn reapply_current_badge(app: &AppHandle) {
