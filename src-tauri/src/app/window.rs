@@ -1022,7 +1022,66 @@ fn build_window(
         });
     }
 
-    window_builder = window_builder.on_navigation(|_| true);
+    {
+        let allow_new_window = window_config.new_window;
+        let is_secondary_popup = label != "pake";
+        let nav_app = app.clone();
+        let nav_label = label.to_string();
+        let nav_app_host: Option<String> = tauri::Url::parse(&window_config.url)
+            .ok()
+            .and_then(|parsed| {
+                let continue_host = parsed
+                    .query_pairs()
+                    .find(|(k, _)| k == "continue")
+                    .and_then(|(_, v)| tauri::Url::parse(&v).ok())
+                    .and_then(|u| u.host_str().map(str::to_owned));
+                continue_host.or_else(|| parsed.host_str().map(str::to_owned))
+            });
+
+        window_builder = window_builder.on_navigation(move |target_url| {
+            if is_secondary_popup
+                && !allow_new_window
+                && matches!(target_url.scheme(), "http" | "https")
+            {
+                let host = target_url.host_str().unwrap_or("");
+                let is_same_app = nav_app_host
+                    .as_deref()
+                    .is_some_and(|h| host.eq_ignore_ascii_case(h));
+                let is_auth = host.eq_ignore_ascii_case("accounts.google.com");
+
+                if !is_same_app && !is_auth {
+                    let url_str = target_url.to_string();
+                    let opener_handle = nav_app.clone();
+                    let close_handle = nav_app.clone();
+                    let close_label = nav_label.clone();
+                    std::thread::spawn(move || {
+                        #[cfg(target_os = "windows")]
+                        {
+                            use std::os::windows::process::CommandExt;
+                            const CREATE_NO_WINDOW: u32 = 0x08000000;
+                            if std::process::Command::new("rundll32.exe")
+                                .args(["url.dll,FileProtocolHandler", &url_str])
+                                .creation_flags(CREATE_NO_WINDOW)
+                                .spawn()
+                                .is_ok()
+                            {
+                                if let Some(popup) = close_handle.get_webview_window(&close_label) {
+                                    let _ = popup.close();
+                                }
+                                return;
+                            }
+                        }
+                        let _ = opener_handle.opener().open_url(&url_str, None::<&str>);
+                        if let Some(popup) = close_handle.get_webview_window(&close_label) {
+                            let _ = popup.close();
+                        }
+                    });
+                    return false;
+                }
+            }
+            true
+        });
+    }
 
     let window = window_builder.build()?;
 
