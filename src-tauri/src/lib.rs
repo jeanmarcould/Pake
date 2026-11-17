@@ -475,6 +475,19 @@ pub fn run_app() {
             quit_app,
             reveal_download,
         ])
+    
+        // Only Gmail and Google Chat stay resident in the system tray;
+        // all other apps (Meet, Gemini, Calendar, etc.) have no tray icon and cold-exit on X.
+        let product_lower = tauri_config
+            .product_name
+            .as_deref()
+            .unwrap_or("")
+            .to_lowercase();
+        let is_tray_app = product_lower == "gmail" || product_lower == "google chat";
+        let show_system_tray = is_tray_app;
+        let hide_on_close = is_tray_app;
+        let start_to_tray = start_to_tray && is_tray_app;
+
         .setup(move |app| {
             // Grant remote IPC only to the immutable, packaged entry origins,
             // before any webview can start loading untrusted content.
