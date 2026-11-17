@@ -1035,6 +1035,64 @@ document.addEventListener("DOMContentLoaded", () => {
       attachTitleObserver();
     }
   }
+
+// Deduplicate repeated/child-window notifications for the same event within 15 seconds
+  if (typeof window.Notification === "function" && !window.Notification.__pakeDeduped) {
+    const OrigNotification = window.Notification;
+    const DEDUP_STORAGE_KEY = "__pake_notif_dedup_v1";
+    const DEDUP_WINDOW_MS = 15000;
+
+    const shouldSuppressNotification = (title, options) => {
+      try {
+        const now = Date.now();
+        const tag = options && options.tag ? String(options.tag) : "";
+        const body = options && options.body ? String(options.body) : "";
+        const key = tag ? `tag:${tag}` : `msg:${String(title || "")}::${body}`;
+
+        const raw = localStorage.getItem(DEDUP_STORAGE_KEY);
+        const cache = raw ? JSON.parse(raw) : {};
+        for (const k of Object.keys(cache)) {
+          if (now - cache[k] > DEDUP_WINDOW_MS) {
+            delete cache[k];
+          }
+        }
+
+        if (cache[key] && now - cache[key] < DEDUP_WINDOW_MS) {
+          localStorage.setItem(DEDUP_STORAGE_KEY, JSON.stringify(cache));
+          return true;
+        }
+
+        cache[key] = now;
+        localStorage.setItem(DEDUP_STORAGE_KEY, JSON.stringify(cache));
+      } catch (_) {
+        // Ignore storage errors and allow notification through
+      }
+      return false;
+    };
+
+    const DedupedNotification = function (title, options) {
+      if (shouldSuppressNotification(title, options)) {
+        return {
+          title: String(title || ""),
+          close() {},
+          addEventListener() {},
+          removeEventListener() {},
+          dispatchEvent() { return false; },
+        };
+      }
+      return new OrigNotification(title, options);
+    };
+
+    DedupedNotification.prototype = OrigNotification.prototype;
+    Object.defineProperty(DedupedNotification, "permission", {
+      get: () => OrigNotification.permission,
+    });
+    if (typeof OrigNotification.requestPermission === "function") {
+      DedupedNotification.requestPermission = OrigNotification.requestPermission.bind(OrigNotification);
+    }
+    DedupedNotification.__pakeDeduped = true;
+    window.Notification = DedupedNotification;
+  }
   
   // Set the default zoom, There are problems with Loop without using try-catch.
   try {
