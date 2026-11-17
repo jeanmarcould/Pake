@@ -124,21 +124,6 @@ fn is_niri_session(niri_socket: Option<&str>, desktop_values: &[Option<&str>]) -
             .any(|value| contains_niri(value))
 }
 
-/// The two WebKit workarounds have different origins and therefore different
-/// scopes, which one gate cannot express.
-///
-/// `WEBKIT_DISABLE_DMABUF_RENDERER` came from #1117 (96e57376) for Linux
-/// stability in general, three months before anything Wayland-specific, and
-/// upstream still reports the blank window it prevents on X11 with the NVIDIA
-/// proprietary driver (tauri-apps/tauri#9394). This is the legacy policy;
-/// apply_linux_webkit_runtime_flags substitutes SHM on WebKitGTK 2.52+.
-///
-/// niri is excepted because #1226 was fixed by dropping both variables, and on
-/// WebKitGTK 2.52 either one alone is enough to undo that: disabling the dmabuf
-/// renderer leaves `AcceleratedBackingStore::rendererBufferTransportMode` empty,
-/// `checkRequirements()` then returns false, and `HardwareAccelerationManager`
-/// clears `m_canUseHardwareAcceleration` through an OR. Setting only this one
-/// would put niri back in the state #1226 reported.
 #[cfg(any(target_os = "linux", test))]
 fn should_disable_dmabuf_renderer(
     safe_mode: Option<&str>,
@@ -152,15 +137,6 @@ fn should_disable_dmabuf_renderer(
     !is_niri_session(niri_socket, desktop_values)
 }
 
-/// `WEBKIT_DISABLE_COMPOSITING_MODE` came from cb911ec7, for a blank screen on
-/// Wayland without a GPU. X11 never had that failure, so this one is
-/// Wayland-only, with the same niri exception.
-///
-/// It is not on its own what segfaults playback in #1374. Both variables reach
-/// the same boolean on WebKitGTK 2.52, so the state that crashes is hardware
-/// acceleration being off, whichever variable turned it off. Narrowing this one
-/// changed nothing on X11 while the dmabuf flag still applied there.
-/// `PAKE_LINUX_WEBKIT_SAFE_MODE` still forces or suppresses both anywhere.
 #[cfg(any(target_os = "linux", test))]
 fn should_disable_compositing_mode(
     safe_mode: Option<&str>,
@@ -173,10 +149,6 @@ fn should_disable_compositing_mode(
         return !is_disabled_env_value(value);
     }
 
-    // WAYLAND_DISPLAY says a compositor is reachable, not that GTK will use it.
-    // An explicit GDK_BACKEND=x11 selects the X11 path, so the Wayland-only
-    // workaround does not apply. should_force_wayland_gdk_backend also
-    // treats an explicit backend as authoritative.
     if gdk_backend.is_some_and(|value| value.trim().eq_ignore_ascii_case("x11")) {
         return false;
     }
@@ -188,10 +160,6 @@ fn should_disable_compositing_mode(
     !is_niri_session(niri_socket, desktop_values)
 }
 
-// On WebKitGTK 2.52+, SHM replaces both legacy flags on X11 and Wayland:
-// either flag turns hardware acceleration off, which crashes video playback
-// (#1374 on X11, #1386 on GNOME Wayland) and makes Wayland sluggish (#1192).
-// Older WebKit keeps its existing workarounds; niri stays native.
 #[cfg(any(target_os = "linux", test))]
 fn should_use_shm_renderer(
     webkit_version: (u32, u32),
@@ -207,14 +175,10 @@ fn should_force_wayland_gdk_backend(
     wayland_display: Option<&str>,
     display: Option<&str>,
 ) -> bool {
-    // Respect an explicit user choice.
     if is_non_empty_env_value(gdk_backend) {
         return false;
     }
 
-    // On pure Wayland compositors without XWayland (e.g. Niri), $DISPLAY is unset
-    // and GTK defaults to the X11 backend, which aborts with "Failed to initialize
-    // GTK". Wayland is then the only viable backend, so forcing it is safe.
     is_non_empty_env_value(wayland_display) && !is_non_empty_env_value(display)
 }
 
@@ -271,8 +235,6 @@ fn apply_linux_webkit_runtime_flags() {
         && std::env::var_os(WEBKIT_DISABLE_DMABUF_RENDERER).is_none()
         && std::env::var_os(WEBKIT_DISABLE_COMPOSITING_MODE).is_none()
     {
-        // Unlike disabling the renderer, SHM keeps the backing store available
-        // for video while avoiding hardware-buffer imports (#1374, #1386).
         if std::env::var_os(WEBKIT_DMABUF_RENDERER_FORCE_SHM).is_none() {
             std::env::set_var(WEBKIT_DMABUF_RENDERER_FORCE_SHM, "1");
         }
@@ -319,6 +281,7 @@ pub fn run_app() {
             context.package_info_mut().name = name.clone();
         }
     }
+
     let tauri_app = tauri::Builder::default();
 
     let show_system_tray = pake_config.show_system_tray();
@@ -326,7 +289,21 @@ pub fn run_app() {
     let remember_url = pake_config.windows[0].remembers_last_url();
     let activation_shortcut = pake_config.windows[0].activation_shortcut.clone();
     let init_fullscreen = pake_config.windows[0].fullscreen;
-    let start_to_tray = pake_config.windows[0].start_to_tray && show_system_tray; // Only valid when tray is enabled
+    let start_to_tray = pake_config.windows[0].start_to_tray && show_system_tray;
+
+    // Only Gmail and Google Chat stay resident in the system tray;
+    // all other apps (Meet, Gemini, Calendar, etc.) have no tray icon and cold-exit on X.
+    let product_lower = tauri_config
+        .product_name
+        .as_deref()
+        .unwrap_or("")
+        .to_lowercase();
+    let is_tray_app =
+        product_lower == "gmail" || product_lower == "google chat" || product_lower == "googlechat";
+    let show_system_tray = is_tray_app;
+    let hide_on_close = is_tray_app;
+    let start_to_tray = start_to_tray && is_tray_app;
+
     let multi_instance = pake_config.multi_instance;
     let multi_window = pake_config.multi_window;
     let _enable_find = pake_config.windows[0].enable_find;
@@ -350,9 +327,9 @@ pub fn run_app() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_opener::init()); // Add this
+        .plugin(tauri_plugin_opener::init());
 
-// Only add single instance plugin if multiple instances are not allowed
+    // Only add single instance plugin if multiple instances are not allowed
     if !multi_instance {
         let instance_revealed = startup_window_revealed.clone();
         app_builder = app_builder.plugin(tauri_plugin_single_instance::init(
@@ -375,6 +352,8 @@ pub fn run_app() {
                     }
                     let _ = window.show();
                     let _ = window.unminimize();
+                    crate::app::invoke::set_gmail_low_memory(app, false);
+                    crate::app::invoke::reapply_current_badge(app);
                     reapply_window_icon(&window);
                     #[cfg(target_os = "windows")]
                     {
@@ -418,17 +397,12 @@ pub fn run_app() {
 
     // Reveal hidden windows after the first real document finishes loading so
     // slow WKWebView cold starts do not expose an empty but interactive shell.
-    // - Main label "pake": once-only latch + start_to_tray opt-out.
-    // - Secondary multi-window labels ("pake-N"): reveal if still hidden (Cmd+N).
-    // start_to_tray keeps the main window hidden until the user opens it.
     {
         let page_load_revealed = startup_window_revealed.clone();
         app_builder = app_builder.on_page_load(move |webview, payload| {
             if !matches!(payload.event(), PageLoadEvent::Finished) {
                 return;
             }
-            // Skip about:blank (and other about: placeholders) used by the macOS
-            // cert-bypass path before the real target URL navigates.
             if is_placeholder_startup_url(payload.url()) {
                 return;
             }
@@ -444,8 +418,6 @@ pub fn run_app() {
                 return;
             }
 
-            // Multi-window clones (pake-1, pake-2, …) built hidden by
-            // open_additional_window_safe.
             if label.starts_with("pake-") {
                 if let Some(window) = webview.app_handle().get_webview_window(label) {
                     reveal_built_window(&window);
@@ -475,19 +447,6 @@ pub fn run_app() {
             quit_app,
             reveal_download,
         ])
-    
-        // Only Gmail and Google Chat stay resident in the system tray;
-        // all other apps (Meet, Gemini, Calendar, etc.) have no tray icon and cold-exit on X.
-        let product_lower = tauri_config
-            .product_name
-            .as_deref()
-            .unwrap_or("")
-            .to_lowercase();
-        let is_tray_app = product_lower == "gmail" || product_lower == "google chat";
-        let show_system_tray = is_tray_app;
-        let hide_on_close = is_tray_app;
-        let start_to_tray = start_to_tray && is_tray_app;
-
         .setup(move |app| {
             // Grant remote IPC only to the immutable, packaged entry origins,
             // before any webview can start loading untrusted content.
@@ -517,7 +476,7 @@ pub fn run_app() {
             // --- Menu Construction End ---
 
             let window = set_window(app.app_handle(), &pake_config, &tauri_config)?;
-            
+
             if let Some(startup_url) = std::env::args()
                 .skip(1)
                 .find(|arg| arg.starts_with("http://") || arg.starts_with("https://"))
@@ -526,7 +485,7 @@ pub fn run_app() {
                 let _ = window.navigate(startup_url);
                 reveal_startup_window(window.clone(), init_fullscreen, &startup_window_revealed);
             }
-            
+
             // An explicit --dark-mode wins over the desktop preference.
             #[cfg(target_os = "linux")]
             if !pake_config.windows[0].dark_mode {
@@ -682,11 +641,9 @@ mod tests {
 
     #[test]
     fn user_show_then_hide_blocks_automatic_startup_reveal() {
-        // Slow page load: user opens from tray/shortcut, then hides again.
-        // Page-load finish and the 3s fallback must not reopen the window.
         let revealed = AtomicBool::new(false);
-        cancel_startup_reveal(&revealed); // explicit show
-        cancel_startup_reveal(&revealed); // explicit hide
+        cancel_startup_reveal(&revealed);
+        cancel_startup_reveal(&revealed);
         assert!(
             !claim_startup_reveal(&revealed),
             "automatic reveal must stay cancelled after user visibility control"
@@ -702,8 +659,6 @@ mod tests {
 
     #[test]
     fn dmabuf_renderer_stays_disabled_outside_niri() {
-        // #1117 was never Wayland-scoped, and upstream still reports the blank
-        // window it prevents on X11 with the NVIDIA proprietary driver.
         let none = [None, None, None];
         assert!(should_disable_dmabuf_renderer(None, None, &none));
         assert!(should_disable_dmabuf_renderer(Some("1"), None, &none));
@@ -722,9 +677,6 @@ mod tests {
 
     #[test]
     fn dmabuf_renderer_is_kept_for_niri_socket() {
-        // #1226 was fixed by dropping both variables. Either one alone puts a
-        // niri session back into the state it reported, because both reach the
-        // same hardware-acceleration boolean in WebKitGTK 2.52.
         assert!(!should_disable_dmabuf_renderer(
             None,
             Some("/run/user/501/niri.sock"),
@@ -752,10 +704,6 @@ mod tests {
 
     #[test]
     fn legacy_x11_keeps_dmabuf_disabled_and_skips_compositing() {
-        // The shape of #1374: an X11 session still gets the stability flag it
-        // has had since #1117, and does not get the compositing one. Both clear
-        // the same hardware-acceleration boolean, so leaving compositing unset
-        // here does not by itself restore acceleration.
         let desktop = [Some("i3"), None, None];
         assert!(should_disable_dmabuf_renderer(None, None, &desktop));
         assert!(!should_disable_compositing_mode(
@@ -765,8 +713,6 @@ mod tests {
 
     #[test]
     fn explicit_x11_gdk_backend_keeps_compositing_on_wayland() {
-        // An explicit X11 backend skips the Wayland-only workaround even
-        // when a Wayland compositor is available.
         assert!(!should_disable_compositing_mode(
             None,
             None,
@@ -774,7 +720,6 @@ mod tests {
             Some("x11"),
             &[None, None, None]
         ));
-        // An explicit wayland backend is still a Wayland session.
         assert!(should_disable_compositing_mode(
             None,
             None,
@@ -797,8 +742,6 @@ mod tests {
 
     #[test]
     fn modern_wayland_uses_shm_instead_of_disabling_compositing() {
-        // The shape of #1386: GNOME Wayland on WebKitGTK 2.52 got both legacy
-        // flags, which turn hardware acceleration off and crash video.
         let desktop = [Some("GNOME"), None, None];
         assert!(should_disable_compositing_mode(
             None,
