@@ -241,6 +241,55 @@ fn apply_badge_label(app: &AppHandle, label: Option<&str>) -> Result<(), String>
         .map_err(|e| format!("Failed to set badge count: {e}"))
 }
 
+pub fn reapply_current_badge(app: &AppHandle) {
+    let current = BADGE_COUNT.load(Ordering::SeqCst);
+    if current > 0 {
+        let _ = apply_badge(app, Some(current));
+    }
+}
+
+static GMAIL_LOW_MEMORY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_gmail_low_memory(app: &AppHandle, low: bool) {
+    let is_gmail = app
+        .config()
+        .product_name
+        .as_deref()
+        .map(|name| name.eq_ignore_ascii_case("gmail"))
+        .unwrap_or(false);
+    if !is_gmail {
+        return;
+    }
+
+    if GMAIL_LOW_MEMORY.swap(low, Ordering::SeqCst) == low {
+        return;
+    }
+
+    #[cfg(target_os = "windows")]
+    if let Some(window) = app.get_webview_window("pake") {
+        let _ = window.with_webview(move |webview| unsafe {
+            use webview2_com::Microsoft::Web::WebView2::Win32::{
+                ICoreWebView2_19,
+                COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+                COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+            };
+            use windows_core::Interface;
+
+            if let Ok(core) = webview.controller().CoreWebView2() {
+                if let Ok(core19) = core.cast::<ICoreWebView2_19>() {
+                    let level = if low {
+                        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+                    } else {
+                        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+                    };
+                    let _ = core19.SetMemoryUsageTargetLevel(level);
+                }
+            }
+        });
+    }
+}
+
 #[derive(serde::Deserialize)]
 pub struct DownloadFileParams {
     url: String,
