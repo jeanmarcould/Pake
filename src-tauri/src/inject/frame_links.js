@@ -32,6 +32,58 @@
     window.top.postMessage({ type: "pake:frame-external-link", url }, "*");
   }
 
+function createDeferredPopupProxy(name) {
+    let closed = false;
+    const navigate = (nextUrl) => {
+      if (closed || typeof nextUrl !== "string" || !nextUrl.trim()) return;
+      const external = externalDestination(nextUrl, name);
+      if (external) {
+        forward(external);
+      } else {
+        originalOpen.call(window, nextUrl, name || "_blank");
+      }
+    };
+    const locationObj = {
+      get href() {
+        return "about:blank";
+      },
+      set href(nextUrl) {
+        navigate(nextUrl);
+      },
+      assign(nextUrl) {
+        navigate(nextUrl);
+      },
+      replace(nextUrl) {
+        navigate(nextUrl);
+      },
+      toString() {
+        return "about:blank";
+      },
+    };
+    const target = {
+      location: locationObj,
+      opener: window,
+      get closed() {
+        return closed;
+      },
+      focus() {},
+      blur() {},
+      close() {
+        closed = true;
+      },
+    };
+    return new Proxy(target, {
+      set(obj, prop, value) {
+        if (prop === "location") {
+          navigate(value);
+          return true;
+        }
+        obj[prop] = value;
+        return true;
+      },
+    });
+  }
+
   window.open = function (url, name, specs) {
     url = normalizePopupUrl(url);
     // Named targets can navigate an existing frame and must retain its proxy.
@@ -39,8 +91,15 @@
       return originalOpen.call(window, url, name, specs);
     }
     const external = externalDestination(url, name);
-    if (!external) return originalOpen.call(window, url, name, specs);
-    forward(external);
+    if (external) {
+      forward(external);
+      return null;
+    }
+    const popup = originalOpen.call(window, url, name, specs);
+    if (popup) return popup;
+    if (!url || /^about:blank(?:[?#]|$)/i.test(String(url))) {
+      return createDeferredPopupProxy(name);
+    }
     return null;
   };
 
