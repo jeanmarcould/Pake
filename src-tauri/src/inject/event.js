@@ -1000,14 +1000,22 @@ document.addEventListener("DOMContentLoaded", () => {
     routeFrameLink(source, href);
   }
 
-// Bridge Web App Badging API (used by Google Chat) to document.title for Rust's native badge hook
+// Bridge Web App Badging API (used by Google Chat) to top-level document.title for Rust's native badge hook
   if ("setAppBadge" in navigator) {
     let appBadgeCount = 0;
+    const getTopDocument = () => {
+      try {
+        if (window.top && window.top.document) return window.top.document;
+      } catch (_) {}
+      return document;
+    };
+
     const syncBadgeTitle = () => {
-      const cleanTitle = document.title.replace(/^\(\d+\)\s*/, "");
+      const targetDoc = getTopDocument();
+      const cleanTitle = targetDoc.title.replace(/^\(\d+\)\s*/, "");
       const desiredTitle = appBadgeCount > 0 ? `(${appBadgeCount}) ${cleanTitle}` : cleanTitle;
-      if (document.title !== desiredTitle) {
-        document.title = desiredTitle;
+      if (targetDoc.title !== desiredTitle) {
+        targetDoc.title = desiredTitle;
       }
     };
 
@@ -1022,7 +1030,8 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     const attachTitleObserver = () => {
-      const target = document.querySelector("title") || document.head;
+      const targetDoc = getTopDocument();
+      const target = targetDoc.querySelector("title") || targetDoc.head;
       if (!target) return;
       new MutationObserver(() => {
         if (appBadgeCount > 0) syncBadgeTitle();
@@ -1033,6 +1042,94 @@ document.addEventListener("DOMContentLoaded", () => {
       document.addEventListener("DOMContentLoaded", attachTitleObserver, { once: true });
     } else {
       attachTitleObserver();
+    }
+  }
+
+  // Bridge ServiceWorker/iframe notifications (used by Google Chat) & deduplicate across windows
+  if (typeof window.Notification === "function" && !window.Notification.__pakeDeduped) {
+    const getTopNotificationCtor = () => {
+      try {
+        if (window.top && window.top !== window && typeof window.top.Notification === "function") {
+          return window.top.Notification;
+        }
+      } catch (_) {}
+      return window.Notification;
+    };
+
+    const OrigNotification = window.Notification;
+    const DEDUP_STORAGE_KEY = "__pake_notif_dedup_v1";
+    const DEDUP_WINDOW_MS = 15000;
+
+    const shouldSuppressNotification = (title, options) => {
+      try {
+        const now = Date.now();
+        const tag = options && options.tag ? String(options.tag) : "";
+        const body = options && options.body ? String(options.body) : "";
+        const key = tag ? `tag:${tag}` : `msg:${String(title || "")}::${body}`;
+
+        const raw = localStorage.getItem(DEDUP_STORAGE_KEY);
+        const cache = raw ? JSON.parse(raw) : {};
+        for (const k of Object.keys(cache)) {
+          if (now - cache[k] > DEDUP_WINDOW_MS) {
+            delete cache[k];
+          }
+        }
+
+        if (cache[key] && now - cache[key] < DEDUP_WINDOW_MS) {
+          localStorage.setItem(DEDUP_STORAGE_KEY, JSON.stringify(cache));
+          return true;
+        }
+
+        cache[key] = now;
+        localStorage.setItem(DEDUP_STORAGE_KEY, JSON.stringify(cache));
+      } catch (_) {}
+      return false;
+    };
+
+    const DedupedNotification = function (title, options) {
+      const TopNotify = getTopNotificationCtor();
+      if (TopNotify !== DedupedNotification && TopNotify !== OrigNotification) {
+        return new TopNotify(title, options);
+      }
+      if (shouldSuppressNotification(title, options)) {
+        return {
+          title: String(title || ""),
+          close() {},
+          addEventListener() {},
+          removeEventListener() {},
+          dispatchEvent() { return false; },
+        };
+      }
+      return new OrigNotification(title, options);
+    };
+
+    DedupedNotification.prototype = OrigNotification.prototype;
+    Object.defineProperty(DedupedNotification, "permission", {
+      get: () => OrigNotification.permission,
+    });
+    if (typeof OrigNotification.requestPermission === "function") {
+      DedupedNotification.requestPermission = OrigNotification.requestPermission.bind(OrigNotification);
+    }
+    DedupedNotification.__pakeDeduped = true;
+    window.Notification = DedupedNotification;
+
+    if (
+      typeof ServiceWorkerRegistration !== "undefined" &&
+      ServiceWorkerRegistration.prototype &&
+      typeof ServiceWorkerRegistration.prototype.showNotification === "function" &&
+      !ServiceWorkerRegistration.prototype.showNotification.__pakeBridged
+    ) {
+      const bridgedShowNotification = function (title, options) {
+        try {
+          const TopNotify = getTopNotificationCtor();
+          new TopNotify(title, options);
+        } catch (err) {
+          console.warn("[Pake] Failed to bridge SW notification:", err);
+        }
+        return Promise.resolve();
+      };
+      bridgedShowNotification.__pakeBridged = true;
+      ServiceWorkerRegistration.prototype.showNotification = bridgedShowNotification;
     }
   }
 
