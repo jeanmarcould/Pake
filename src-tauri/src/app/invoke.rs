@@ -44,22 +44,190 @@ fn apply_badge(app: &AppHandle, count: Option<i64>) -> Result<(), String> {
     apply_badge_label(app, label.as_deref())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn apply_badge_label(app: &AppHandle, label: Option<&str>) -> Result<(), String> {
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::NSApplication;
-    use objc2_foundation::NSString;
+    let window = app
+        .get_webview_window("pake")
+        .ok_or("Main window not found")?;
+    let count = label.and_then(|s| s.parse::<i64>().ok());
+    window
+        .set_badge_count(count)
+        .map_err(|e| format!("Failed to set badge count: {e}"))
+}
 
-    let label = label.map(str::to_owned);
-    app.run_on_main_thread(move || {
-        let Some(mtm) = MainThreadMarker::new() else {
-            return;
-        };
-        let dock_tile = NSApplication::sharedApplication(mtm).dockTile();
-        let ns_label = label.as_deref().map(NSString::from_str);
-        dock_tile.setBadgeLabel(ns_label.as_deref());
-    })
-    .map_err(|e| format!("Failed to dispatch dock badge update: {e}"))
+#[allow(dead_code)]
+static BASE_TRAY_ICON: std::sync::OnceLock<tauri::image::Image<'static>> =
+    std::sync::OnceLock::new();
+
+pub fn register_base_tray_icon(icon: tauri::image::Image<'static>) {
+    let _ = BASE_TRAY_ICON.set(icon);
+}
+
+#[cfg(target_os = "windows")]
+fn make_tray_badged_icon(base: &tauri::image::Image<'_>) -> tauri::image::Image<'static> {
+    let w = base.width();
+    let h = base.height();
+    let mut rgba = base.rgba().to_vec();
+    if w == 0 || h == 0 || rgba.len() < (w * h * 4) as usize {
+        return base.to_owned();
+    }
+
+    let r = (w as f32 * 0.27).max(4.0);
+    let cx = w as f32 - r - 0.5;
+    let cy = r + 0.5;
+
+    for y in 0..h {
+        for x in 0..w {
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let idx = ((y * w + x) * 4) as usize;
+            if dist <= r + 0.5 {
+                let color = if dist > r - 1.4 {
+                    [255u8, 255, 255, 255]
+                } else {
+                    [217u8, 48, 37, 255]
+                };
+                rgba[idx..idx + 4].copy_from_slice(&color);
+            }
+        }
+    }
+
+    tauri::image::Image::new_owned(rgba, w, h)
+}
+
+#[cfg(target_os = "windows")]
+fn update_tray_badge(app: &AppHandle, has_unread: bool) {
+    if let Some(tray) = app.tray_by_id("pake-tray") {
+        if let Some(base) = BASE_TRAY_ICON.get() {
+            let icon = if has_unread {
+                make_tray_badged_icon(base)
+            } else {
+                base.to_owned()
+            };
+            let _ = tray.set_icon(Some(icon));
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn draw_digit_5x7(rgba: &mut [u8], canvas_w: usize, digit: u8, ox: usize, oy: usize) {
+    const GLYPHS: [[&str; 7]; 9] = [
+        ["..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."],
+        [".###.", "#...#", "....#", "..##.", ".#...", "#....", "#####"],
+        [".###.", "#...#", "....#", "..##.", "....#", "#...#", ".###."],
+        ["...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."],
+        ["#####", "#....", "####.", "....#", "....#", "#...#", ".###."],
+        ["..##.", ".#...", "#....", "####.", "#...#", "#...#", ".###."],
+        ["#####", "....#", "...#.", "..#..", ".#...", ".#...", ".#..."],
+        [".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."],
+        [".###.", "#...#", "#...#", ".####", "....#", "...#.", ".##.."],
+    ];
+    if !(1..=9).contains(&digit) {
+        return;
+    }
+    let glyph = GLYPHS[(digit - 1) as usize];
+    for (gy, row) in glyph.iter().enumerate() {
+        for (gx, ch) in row.bytes().enumerate() {
+            if ch == b'#' {
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let idx = ((oy + gy * 2 + dy) * canvas_w + (ox + gx * 2 + dx)) * 4;
+                        rgba[idx..idx + 4].copy_from_slice(&[255, 255, 255, 255]);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn make_taskbar_badge_icon(
+    count: Option<i64>,
+    has_non_numeric_label: bool,
+) -> Option<tauri::image::Image<'static>> {
+    let show = match count {
+        Some(n) if n > 0 => true,
+        Some(_) => false,
+        None => has_non_numeric_label,
+    };
+    if !show {
+        return None;
+    }
+
+    let size = 32usize;
+    let mut rgba = vec![0u8; size * size * 4];
+    let center = 15.5f32;
+    let radius = 15.0f32;
+
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - center;
+            let dy = y as f32 - center;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let idx = (y * size + x) * 4;
+            if dist <= radius {
+                let color = if dist > radius - 1.8 {
+                    [255, 255, 255, 255]
+                } else {
+                    [217, 48, 37, 255]
+                };
+                rgba[idx..idx + 4].copy_from_slice(&color);
+            }
+        }
+    }
+
+    match count {
+        Some(n) if (1..=9).contains(&n) => {
+            draw_digit_5x7(&mut rgba, size, n as u8, 11, 9);
+        }
+        Some(n) if n >= 10 => {
+            draw_digit_5x7(&mut rgba, size, 9, 6, 9);
+            for y in 15..17 {
+                for x in 18..25 {
+                    let idx = (y * size + x) * 4;
+                    rgba[idx..idx + 4].copy_from_slice(&[255, 255, 255, 255]);
+                }
+            }
+            for y in 12..20 {
+                for x in 20..23 {
+                    let idx = (y * size + x) * 4;
+                    rgba[idx..idx + 4].copy_from_slice(&[255, 255, 255, 255]);
+                }
+            }
+        }
+        _ => {
+            for y in 11..21 {
+                for x in 11..21 {
+                    let dx = x as f32 - center;
+                    let dy = y as f32 - center;
+                    if (dx * dx + dy * dy).sqrt() <= 4.5 {
+                        let idx = (y * size + x) * 4;
+                        rgba[idx..idx + 4].copy_from_slice(&[255, 255, 255, 255]);
+                    }
+                }
+            }
+        }
+    }
+
+    Some(tauri::image::Image::new_owned(rgba, size as u32, size as u32))
+}
+
+#[cfg(target_os = "windows")]
+fn apply_badge_label(app: &AppHandle, label: Option<&str>) -> Result<(), String> {
+    let window = app
+        .get_webview_window("pake")
+        .ok_or("Main window not found")?;
+    let count = label.and_then(|s| s.parse::<i64>().ok());
+    let has_non_numeric_label = label.is_some() && count.is_none();
+    let has_unread = count.map_or(has_non_numeric_label, |n| n > 0);
+
+    update_tray_badge(app, has_unread);
+
+    let overlay = make_taskbar_badge_icon(count, has_non_numeric_label);
+    window
+        .set_overlay_icon(overlay)
+        .map_err(|e| format!("Failed to set taskbar overlay icon: {e}"))
 }
 
 #[cfg(not(target_os = "macos"))]
