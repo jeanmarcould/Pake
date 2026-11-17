@@ -357,14 +357,22 @@ pub fn run_app() {
         let instance_revealed = startup_window_revealed.clone();
         app_builder = app_builder.plugin(tauri_plugin_single_instance::init(
             move |app, args, _cwd| {
+                let nav_url = args
+                    .iter()
+                    .skip(1)
+                    .find(|arg| arg.starts_with("http://") || arg.starts_with("https://"))
+                    .and_then(|arg| tauri::Url::parse(arg).ok());
                 let is_toast_activation = args
                     .iter()
                     .any(|arg| arg.to_ascii_lowercase().contains("toastactivated"));
 
-                if multi_window && !is_toast_activation {
+                if multi_window && !is_toast_activation && nav_url.is_none() {
                     open_additional_window_safe(app);
                 } else if let Some(window) = app.get_webview_window("pake") {
                     cancel_startup_reveal(&instance_revealed);
+                    if let Some(target_url) = nav_url {
+                        let _ = window.navigate(target_url);
+                    }
                     let _ = window.show();
                     let _ = window.unminimize();
                     reapply_window_icon(&window);
@@ -375,7 +383,6 @@ pub fn run_app() {
                         let _ = window.set_always_on_top(false);
 
                         if is_toast_activation {
-                            // Remove clicked toast from Windows Notification Drawer
                             let aumid = app.config().identifier.clone();
                             std::thread::spawn(move || {
                                 use std::os::windows::process::CommandExt;
@@ -497,7 +504,16 @@ pub fn run_app() {
             // --- Menu Construction End ---
 
             let window = set_window(app.app_handle(), &pake_config, &tauri_config)?;
-
+            
+            if let Some(startup_url) = std::env::args()
+                .skip(1)
+                .find(|arg| arg.starts_with("http://") || arg.starts_with("https://"))
+                .and_then(|arg| tauri::Url::parse(&arg).ok())
+            {
+                let _ = window.navigate(startup_url);
+                reveal_startup_window(window.clone(), init_fullscreen, &startup_window_revealed);
+            }
+            
             // An explicit --dark-mode wins over the desktop preference.
             #[cfg(target_os = "linux")]
             if !pake_config.windows[0].dark_mode {
