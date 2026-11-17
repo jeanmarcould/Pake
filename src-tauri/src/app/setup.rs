@@ -92,6 +92,7 @@ pub fn set_system_tray(
                 // Hide every webview (main + multi-window clones), not only "pake".
                 cancel_startup_reveal(&menu_revealed);
                 hide_all_app_windows(app);
+                crate::app::invoke::set_gmail_low_memory(app, true);
             }
             "show_app" => {
                 cancel_startup_reveal(&menu_revealed);
@@ -135,7 +136,7 @@ pub fn set_system_tray(
     };
 
     if let Some(icon) = resolved_icon {
-        crate::app::invoke::register_base_tray_icon(icon.to_owned());
+        crate::app::invoke::register_base_tray_icon(icon.clone().to_owned());
         tray_builder = tray_builder.icon(icon);
     } else {
         eprintln!("[Pake] No tray icon available; tray will build without an icon.");
