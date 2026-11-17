@@ -375,20 +375,6 @@ pub fn run_app() {
                         let _ = window.set_always_on_top(false);
 
                         if is_toast_activation {
-                            // If a child popup (e.g., Gmail email window) is open, bring it on top
-                            if let Some((_, child_win)) = app
-                                .webview_windows()
-                                .into_iter()
-                                .filter(|(label, _)| label != "pake")
-                                .max_by(|(a, _), (b, _)| a.cmp(b))
-                            {
-                                let _ = child_win.show();
-                                let _ = child_win.unminimize();
-                                let _ = child_win.set_always_on_top(true);
-                                let _ = child_win.set_focus();
-                                let _ = child_win.set_always_on_top(false);
-                            }
-
                             // Remove clicked toast from Windows Notification Drawer
                             let aumid = app.config().identifier.clone();
                             std::thread::spawn(move || {
