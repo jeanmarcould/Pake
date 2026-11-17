@@ -568,6 +568,23 @@ pub fn run_app() {
             Ok(())
         })
         .on_window_event(move |_window, _event| {
+            if _window.label() == "pake" {
+                match _event {
+                    tauri::WindowEvent::Resized(_) => {
+                        if _window.is_minimized().unwrap_or(false) {
+                            crate::app::invoke::set_gmail_low_memory(_window.app_handle(), true);
+                        } else if _window.is_visible().unwrap_or(false) {
+                            crate::app::invoke::set_gmail_low_memory(_window.app_handle(), false);
+                            crate::app::invoke::reapply_current_badge(_window.app_handle());
+                        }
+                    }
+                    tauri::WindowEvent::Focused(true) => {
+                        crate::app::invoke::set_gmail_low_memory(_window.app_handle(), false);
+                        crate::app::invoke::reapply_current_badge(_window.app_handle());
+                    }
+                    _ => {}
+                }
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = _event {
                 if remember_url && _window.label() == "pake" {
                     save_last_url(_window.app_handle());
@@ -597,6 +614,7 @@ pub fn run_app() {
                         #[cfg(not(target_os = "macos"))]
                         let _ = window.minimize();
                         let _ = window.hide();
+                        crate::app::invoke::set_gmail_low_memory(window.app_handle(), true);
                     });
                     api.prevent_close();
                 }
