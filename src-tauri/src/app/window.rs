@@ -670,8 +670,8 @@ fn build_window(
     window_builder = window_builder.disable_drag_drop_handler();
 
     #[cfg(target_os = "windows")]
-    if let Ok(local_app_data) = app.path().local_data_dir() {
-        window_builder = window_builder.data_directory(local_app_data.join("PakeSuite"));
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        window_builder = window_builder.data_directory(std::path::PathBuf::from(local_app_data).join("PakeSuite"));
     }
 
     {
