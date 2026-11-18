@@ -1112,6 +1112,8 @@ document.addEventListener("DOMContentLoaded", () => {
           dispatchEvent() { return false; },
         };
       }
+
+      // Pass original options so Windows assigns unique IDs and stacks the toasts vertically
       return new OrigNotification(title, options);
     };
 
