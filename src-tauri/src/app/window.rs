@@ -669,11 +669,6 @@ fn build_window(
     // HTML5 drag and drop on Windows; nothing in Pake consumes its events.
     window_builder = window_builder.disable_drag_drop_handler();
 
-    #[cfg(target_os = "windows")]
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        window_builder = window_builder.data_directory(std::path::PathBuf::from(local_app_data).join("PakeSuite"));
-    }
-
     {
         let allow_new_window = window_config.new_window;
         let app_host: Option<String> = tauri::Url::parse(&window_config.url)
@@ -741,7 +736,7 @@ fn build_window(
         }
         let _ = (&window, &title);
     });
-    
+
     // Add initialization scripts. Order matters: pakeConfig must land before
     // any script that reads it, and toast must register `window.pakeToast`
     // before Rust code calls show_toast().
@@ -888,7 +883,14 @@ fn build_window(
     // Windows and Linux: set data_directory before proxy_url
     #[cfg(not(target_os = "macos"))]
     {
-        window_builder = window_builder.data_directory(_data_dir).theme(theme);
+        #[cfg(target_os = "windows")]
+        let target_data_dir = std::env::var("LOCALAPPDATA")
+            .map(|local| std::path::PathBuf::from(local).join("PakeSuite"))
+            .unwrap_or(_data_dir);
+        #[cfg(not(target_os = "windows"))]
+        let target_data_dir = _data_dir;
+
+        window_builder = window_builder.data_directory(target_data_dir).theme(theme);
 
         if window_config.hide_window_decorations {
             window_builder = window_builder.decorations(false);
