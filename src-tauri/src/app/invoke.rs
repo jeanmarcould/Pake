@@ -255,6 +255,29 @@ pub fn reapply_current_badge(app: &AppHandle) {
     }
 }
 
+pub fn sync_badge_from_title(app: &AppHandle, count: u32) {
+    let normalized = normalize_badge_count(Some(count as i64));
+    let val = normalized.unwrap_or(0);
+    BADGE_COUNT.store(val, Ordering::SeqCst);
+    let _ = apply_badge(app, normalized);
+
+    #[cfg(target_os = "windows")]
+    if val > 0 {
+        let app_handle = app.clone();
+        std::thread::spawn(move || {
+            for delay_secs in [2, 6, 11] {
+                std::thread::sleep(std::time::Duration::from_secs(delay_secs));
+                let latest = BADGE_COUNT.load(Ordering::SeqCst);
+                if latest > 0 {
+                    let _ = apply_badge(&app_handle, Some(latest));
+                } else {
+                    break;
+                }
+            }
+        });
+    }
+}
+
 static GMAIL_LOW_MEMORY: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
