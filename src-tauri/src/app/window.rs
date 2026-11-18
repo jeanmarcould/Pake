@@ -732,13 +732,7 @@ fn build_window(
         #[cfg(target_os = "windows")]
         {
             let count = extract_unread_count(&title);
-            if count > 0 {
-                let rgba = render_badge_rgba(count);
-                let icon = tauri::image::Image::new(&rgba, 32, 32);
-                let _ = window.set_overlay_icon(Some(icon));
-            } else {
-                let _ = window.set_overlay_icon(None);
-            }
+            crate::app::invoke::sync_badge_from_title(window.app_handle(), count);
         }
         let _ = (&window, &title);
     });
