@@ -282,16 +282,6 @@ static GMAIL_LOW_MEMORY: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 pub fn set_gmail_low_memory(app: &AppHandle, low: bool) {
-    let is_gmail = app
-        .config()
-        .product_name
-        .as_deref()
-        .map(|name| name.eq_ignore_ascii_case("gmail"))
-        .unwrap_or(false);
-    if !is_gmail {
-        return;
-    }
-
     if GMAIL_LOW_MEMORY.swap(low, Ordering::SeqCst) == low {
         return;
     }
@@ -306,7 +296,10 @@ pub fn set_gmail_low_memory(app: &AppHandle, low: bool) {
             };
             use windows_core::Interface;
 
-            if let Ok(core) = webview.controller().CoreWebView2() {
+            let controller = webview.controller();
+            let _ = controller.SetIsVisible(!low);
+
+            if let Ok(core) = controller.CoreWebView2() {
                 if let Ok(core19) = core.cast::<ICoreWebView2_19>() {
                     let level = if low {
                         COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
