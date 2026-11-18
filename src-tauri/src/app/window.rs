@@ -669,7 +669,12 @@ fn build_window(
     // HTML5 drag and drop on Windows; nothing in Pake consumes its events.
     window_builder = window_builder.disable_drag_drop_handler();
 
-   {
+    #[cfg(target_os = "windows")]
+    if let Ok(local_app_data) = app.path().local_data_dir() {
+        window_builder = window_builder.data_directory(local_app_data.join("PakeSuite"));
+    }
+
+    {
         let allow_new_window = window_config.new_window;
         let app_host: Option<String> = tauri::Url::parse(&window_config.url)
             .ok()
