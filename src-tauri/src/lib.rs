@@ -367,7 +367,12 @@ pub fn run_app() {
                             std::thread::sleep(std::time::Duration::from_millis(300));
                             let _ = window_clone.set_always_on_top(false);
                         });
+
+                        if is_toast_activation {
+                            let _ = window.eval("window.__pakeOnToastActivated?.()");
+                        }
                     }
+                    
                     #[cfg(not(target_os = "windows"))]
                     {
                         #[cfg(target_os = "macos")]
