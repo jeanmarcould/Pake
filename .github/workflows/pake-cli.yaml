@@ -10,12 +10,12 @@ on:
       platform:
         description: "Platform"
         required: true
-        default: "macos-latest"
+        default: "windows-latest"
         type: choice
         options:
           - "windows-latest"
           - "macos-latest"
-          - "ubuntu-24.04"
+          - "ubuntu-latest"
       url:
         description: "Website URL"
         required: true
@@ -57,7 +57,7 @@ on:
         description: "Allow sites to open new windows"
         required: false
         type: boolean
-        default: false
+        default: true
       multi_arch:
         description: "Universal binary (macOS only)"
         required: false
