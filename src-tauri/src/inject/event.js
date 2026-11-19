@@ -1642,6 +1642,30 @@ document.addEventListener("DOMContentLoaded", () => {
     notif.dispatchEvent(new Event("click"));
   };
 
+  const dismissAllNotifications = () => {
+    pendingFocusClick = null;
+    const ids = Array.from(liveNotifications.keys());
+    for (const id of ids) {
+      const notif = liveNotifications.get(id);
+      if (notif) {
+        try {
+          notif.dispatchEvent(new Event("click"));
+        } catch (_) {}
+        notif.close();
+      } else {
+        withdrawNotification(id);
+      }
+    }
+  };
+
+  try {
+    Object.defineProperty(window, "__pakeOnToastActivated", {
+      configurable: true,
+      writable: true,
+      value: dismissAllNotifications,
+    });
+  } catch (_) {}
+
   window.addEventListener("focus", () => {
     interactionSeq++;
     const pending = pendingFocusClick;
