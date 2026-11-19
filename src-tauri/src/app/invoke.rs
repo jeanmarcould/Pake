@@ -258,23 +258,41 @@ pub fn reapply_current_badge(app: &AppHandle) {
 pub fn sync_badge_from_title(app: &AppHandle, count: u32) {
     let normalized = normalize_badge_count(Some(count as i64));
     let val = normalized.unwrap_or(0);
-    BADGE_COUNT.store(val, Ordering::SeqCst);
-    let _ = apply_badge(app, normalized);
-
-    #[cfg(target_os = "windows")]
-    if val > 0 {
-        let app_handle = app.clone();
-        std::thread::spawn(move || {
-            for delay_secs in [2, 6, 11] {
-                std::thread::sleep(std::time::Duration::from_secs(delay_secs));
-                let latest = BADGE_COUNT.load(Ordering::SeqCst);
-                if latest > 0 {
-                    let _ = apply_badge(&app_handle, Some(latest));
-                } else {
-                    break;
+    
+    // Debounce Google Chat's SPA 0-count title resets to prevent flickering
+    if val == 0 {
+        let current = BADGE_COUNT.load(Ordering::SeqCst);
+        if current > 0 {
+            let app_handle = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                // If it is STILL 0 after the delay, safely clear it
+                if BADGE_COUNT.load(Ordering::SeqCst) == 0 {
+                    let _ = apply_badge(&app_handle, Some(0));
                 }
-            }
-        });
+            });
+        }
+        BADGE_COUNT.store(0, Ordering::SeqCst);
+    } else {
+        BADGE_COUNT.store(val, Ordering::SeqCst);
+        let _ = apply_badge(app, normalized);
+        
+        // Re-assert the taskbar overlay after Explorer redraws the button
+        #[cfg(target_os = "windows")]
+        {
+            let app_handle = app.clone();
+            std::thread::spawn(move || {
+                for delay_secs in [3, 7, 12] {
+                    std::thread::sleep(std::time::Duration::from_secs(delay_secs));
+                    let latest = BADGE_COUNT.load(Ordering::SeqCst);
+                    if latest > 0 {
+                        let _ = apply_badge(&app_handle, Some(latest));
+                    } else {
+                        break;
+                    }
+                }
+            });
+        }
     }
 }
 
