@@ -1459,6 +1459,15 @@ document.addEventListener("DOMContentLoaded", () => {
     return { isMedia: false, url: "", type: "" };
   }
 
+  function copyText(text) {
+    const write = navigator.clipboard?.writeText?.(text);
+    if (write?.catch) {
+      write.catch(() => copyTextWithSelection(text));
+    } else if (!write) {
+      copyTextWithSelection(text);
+    }
+  }
+
   // Simplified menu builder
   function buildMenuItems(type, data) {
     const items = [];
@@ -1471,11 +1480,9 @@ document.addEventListener("DOMContentLoaded", () => {
             : menuTexts.downloadVideo;
         items.push(
           createMenuItem(downloadText, () => downloadImage(data.url)),
-          createMenuItem(menuTexts.copyAddress, () =>
-            navigator.clipboard.writeText(data.url),
-          ),
+          createMenuItem(menuTexts.copyAddress, () => copyText(data.url)),
           createMenuItem(menuTexts.openInBrowser, () =>
-            invoke("plugin:shell|open", { path: data.url }),
+            openViaNativeWindow(data.url),
           ),
         );
         break;
@@ -1490,11 +1497,9 @@ document.addEventListener("DOMContentLoaded", () => {
           );
         }
         items.push(
-          createMenuItem(menuTexts.copyAddress, () =>
-            navigator.clipboard.writeText(data.url),
-          ),
+          createMenuItem(menuTexts.copyAddress, () => copyText(data.url)),
           createMenuItem(menuTexts.openInBrowser, () =>
-            invoke("plugin:shell|open", { path: data.url }),
+            openViaNativeWindow(data.url),
           ),
         );
         break;
