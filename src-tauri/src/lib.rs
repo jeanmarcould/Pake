@@ -350,39 +350,23 @@ pub fn run_app() {
                     if let Some(target_url) = nav_url {
                         let _ = window.navigate(target_url);
                     }
+                    crate::app::invoke::set_gmail_low_memory(app, false);
                     let _ = window.show();
                     let _ = window.unminimize();
-                    crate::app::invoke::set_gmail_low_memory(app, false);
                     crate::app::invoke::reapply_current_badge(app);
                     reapply_window_icon(&window);
+                    
                     #[cfg(target_os = "windows")]
                     {
+                        // Break Windows foreground lock: pulse always_on_top with a delay
                         let _ = window.set_always_on_top(true);
                         let _ = window.set_focus();
-                        let _ = window.set_always_on_top(false);
-
-                        if is_toast_activation {
-                            let aumid = app.config().identifier.clone();
-                            std::thread::spawn(move || {
-                                use std::os::windows::process::CommandExt;
-                                const CREATE_NO_WINDOW: u32 = 0x08000000;
-                                let ps_cmd = format!(
-                                    "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; [Windows.UI.Notifications.ToastNotificationManager]::History.Clear('{}')",
-                                    aumid.replace('\'', "''")
-                                );
-                                let _ = std::process::Command::new("powershell.exe")
-                                    .args([
-                                        "-NoProfile",
-                                        "-NonInteractive",
-                                        "-WindowStyle",
-                                        "Hidden",
-                                        "-Command",
-                                        &ps_cmd,
-                                    ])
-                                    .creation_flags(CREATE_NO_WINDOW)
-                                    .spawn();
-                            });
-                        }
+                        
+                        let window_clone = window.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(std::time::Duration::from_millis(300));
+                            let _ = window_clone.set_always_on_top(false);
+                        });
                     }
                     #[cfg(not(target_os = "windows"))]
                     {
