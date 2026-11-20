@@ -840,7 +840,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const isInternalUrl = (url) => matchesInternalUrl(url, window.location.href);
 
- const openViaNativeWindow = (url) => {
+  const openViaNativeWindow = (url) => {
     originalWindowOpen.call(window, url, "_blank");
   };
 
@@ -1012,7 +1012,7 @@ document.addEventListener("DOMContentLoaded", () => {
     routeFrameLink(source, href);
   }
 
-// Bridge Web App Badging API (used by Google Chat) to top-level document.title for Rust's native badge hook
+  // Bridge Web App Badging API (used by Google Chat) to top-level document.title for Rust's native badge hook
   if ("setAppBadge" in navigator) {
     let appBadgeCount = 0;
     const getTopDocument = () => {
@@ -1147,7 +1147,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-// Deduplicate repeated/child-window notifications for the same event within 15 seconds
+  // Deduplicate repeated/child-window notifications for the same event within 15 seconds
   if (typeof window.Notification === "function" && !window.Notification.__pakeDeduped) {
     const OrigNotification = window.Notification;
     const DEDUP_STORAGE_KEY = "__pake_notif_dedup_v1";
@@ -1204,7 +1204,7 @@ document.addEventListener("DOMContentLoaded", () => {
     DedupedNotification.__pakeDeduped = true;
     window.Notification = DedupedNotification;
   }
-  
+
   // Set the default zoom, There are problems with Loop without using try-catch.
   try {
     setDefaultZoom();
@@ -1226,18 +1226,6 @@ document.addEventListener("DOMContentLoaded", () => {
     },
     true,
   );
-
-  // Language detection and texts
-  const isChinese = isChineseLanguage();
-
-  const menuTexts = {
-    // Media operations
-    downloadImage: isChinese ? "下载图片" : "Download Image",
-    downloadVideo: isChinese ? "下载视频" : "Download Video",
-    downloadFile: isChinese ? "下载文件" : "Download File",
-    copyAddress: isChinese ? "复制地址" : "Copy Address",
-    openInBrowser: isChinese ? "浏览器打开" : "Open in Browser",
-  };
 
   // Menu theme configuration
   const MENU_THEMES = {
@@ -1282,16 +1270,15 @@ document.addEventListener("DOMContentLoaded", () => {
   // Menu configuration constants
   const MENU_CONFIG = {
     id: "pake-context-menu",
-    minWidth: "120px", // Compact width for better UX
-    borderRadius: "6px", // Slightly more rounded for modern look
+    minWidth: "120px",
+    borderRadius: "6px",
     fontSize: "13px",
     zIndex: "999999",
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-    // Menu item dimensions
-    itemPadding: "8px 16px", // Increased vertical padding for better comfort
+    itemPadding: "8px 16px",
     itemLineHeight: "1.2",
-    itemBorderRadius: "3px", // Subtle rounded corners for menu items
+    itemBorderRadius: "3px",
     itemTransition: "background-color 0.1s ease",
   };
 
@@ -1459,53 +1446,44 @@ document.addEventListener("DOMContentLoaded", () => {
     return { isMedia: false, url: "", type: "" };
   }
 
-  function copyText(text) {
+  function copyText(text, isLiveSelection = false) {
     const write = navigator.clipboard?.writeText?.(text);
-    if (write?.catch) {
-      write.catch(() => copyTextWithSelection(text));
-    } else if (!write) {
+    const fallback = () => {
+      if (isLiveSelection && document.execCommand("copy")) return;
       copyTextWithSelection(text);
+    };
+    if (write?.catch) {
+      write.catch(fallback);
+    } else if (!write) {
+      fallback();
     }
   }
 
-  // Simplified menu builder
-  function buildMenuItems(type, data) {
-    const items = [];
-
-    switch (type) {
-      case "media":
-        const downloadText =
-          data.type === "image"
-            ? menuTexts.downloadImage
-            : menuTexts.downloadVideo;
-        items.push(
-          createMenuItem(downloadText, () => downloadImage(data.url)),
-          createMenuItem(menuTexts.copyAddress, () => copyText(data.url)),
-          createMenuItem(menuTexts.openInBrowser, () =>
-            openViaNativeWindow(data.url),
-          ),
+  function copyImageToClipboard(imageUrl) {
+    const resolvedUrl = new URL(imageUrl, window.location.href).href;
+    // Windows Clipboard only accepts PNG in ClipboardItem, so convert via canvas
+    const pngPromise = fetch(resolvedUrl)
+      .then((res) =>
+        res.ok ? res : fetch(resolvedUrl, { credentials: "include" }),
+      )
+      .then((res) => res.blob())
+      .then(async (blob) => {
+        if (blob.type === "image/png") return blob;
+        const bitmap = await createImageBitmap(blob);
+        const canvas = Object.assign(document.createElement("canvas"), {
+          width: bitmap.width,
+          height: bitmap.height,
+        });
+        canvas.getContext("2d").drawImage(bitmap, 0, 0);
+        bitmap.close?.();
+        return new Promise((resolve, reject) =>
+          canvas.toBlob((b) => (b ? resolve(b) : reject()), "image/png"),
         );
-        break;
+      });
 
-      case "link":
-        if (data.isFile) {
-          items.push(
-            createMenuItem(menuTexts.downloadFile, () => {
-              const filename = getFilenameFromUrl(data.url);
-              downloadFile(data.url, filename);
-            }),
-          );
-        }
-        items.push(
-          createMenuItem(menuTexts.copyAddress, () => copyText(data.url)),
-          createMenuItem(menuTexts.openInBrowser, () =>
-            openViaNativeWindow(data.url),
-          ),
-        );
-        break;
-    }
-
-    return items;
+    navigator.clipboard
+      ?.write?.([new ClipboardItem({ "image/png": pngPromise })])
+      ?.catch((err) => console.warn("[Pake] Copy image failed:", err));
   }
 
   // Handle right-click context menu
@@ -1513,37 +1491,58 @@ document.addEventListener("DOMContentLoaded", () => {
     "contextmenu",
     function (event) {
       const target = event.target;
-
-      // Check for media elements (images/videos)
       const mediaInfo = getMediaInfo(target);
-
-      // Check for links (but not if it's media)
       const linkElement =
         target && typeof target.closest === "function"
           ? target.closest("a")
           : null;
-      const isLink = linkElement && linkElement.href && !mediaInfo.isMedia;
+      const isLink = Boolean(linkElement?.href && !mediaInfo.isMedia);
+      const selectedText = window.getSelection?.()?.toString() || "";
 
-      // Only show custom menu for media or links
-      if (mediaInfo.isMedia || isLink) {
-        event.preventDefault();
-        event.stopPropagation();
-
-        let menuItems = [];
-
-        if (mediaInfo.isMedia) {
-          menuItems = buildMenuItems("media", mediaInfo);
-        } else if (isLink) {
-          const linkUrl = linkElement.href;
-          menuItems = buildMenuItems("link", {
-            url: linkUrl,
-            isFile: isDownloadableFile(linkUrl),
-          });
-        }
-
-        showContextMenu(event.clientX, event.clientY, menuItems);
+      // Plain text and inputs keep WebView2's native menu (Copy, Cut, Paste)
+      if (!mediaInfo.isMedia && !isLink) {
+        return;
       }
-      // For all other elements, let browser's default context menu handle it
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const items = [];
+
+      if (selectedText.trim()) {
+        items.push(createMenuItem("Copy", () => copyText(selectedText, true)));
+      } else if (mediaInfo.isMedia && mediaInfo.type === "image") {
+        items.push(
+          createMenuItem("Copy", () => copyImageToClipboard(mediaInfo.url)),
+        );
+      }
+
+      if (mediaInfo.isMedia) {
+        const downloadLabel =
+          mediaInfo.type === "image" ? "Download Image" : "Download Video";
+        items.push(
+          createMenuItem(downloadLabel, () => downloadImage(mediaInfo.url)),
+          createMenuItem("Copy Address", () => copyText(mediaInfo.url)),
+          createMenuItem("Open in Browser", () =>
+            openViaNativeWindow(mediaInfo.url),
+          ),
+        );
+      } else if (isLink) {
+        const linkUrl = linkElement.href;
+        if (isDownloadableFile(linkUrl)) {
+          items.push(
+            createMenuItem("Download File", () =>
+              downloadFile(linkUrl, getFilenameFromUrl(linkUrl)),
+            ),
+          );
+        }
+        items.push(
+          createMenuItem("Copy Address", () => copyText(linkUrl)),
+          createMenuItem("Open in Browser", () => openViaNativeWindow(linkUrl)),
+        );
+      }
+
+      showContextMenu(event.clientX, event.clientY, items);
     },
     true,
   );
