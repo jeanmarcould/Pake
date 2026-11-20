@@ -1660,6 +1660,7 @@ document.addEventListener("DOMContentLoaded", () => {
         withdrawNotification(id);
       }
     }
+    withdrawNotification("__all__");
   };
 
   try {

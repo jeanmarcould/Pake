@@ -257,12 +257,10 @@ pub fn run_app() {
     }
 
     let (pake_config, tauri_config) = get_pake_config();
-    // A runtime app sets the shell's AppUserModelID to its identifier so
-    // shortcuts and toasts group with its windows; CLI apps keep the default.
+    // Set the shell's AppUserModelID to its identifier so shortcuts and toasts
+    // group with its windows and match ToastNotificationManager's AUMID.
     #[cfg(windows)]
-    if pake_config.runtime_app {
-        util::set_app_user_model_id(&tauri_config.identifier);
-    }
+    util::set_app_user_model_id(&tauri_config.identifier);
     // A runtime app's login item follows its own setting; a CLI build has none to keep.
     if pake_config.runtime_app {
         app::autostart::reconcile(
@@ -369,6 +367,7 @@ pub fn run_app() {
                         });
 
                         if is_toast_activation {
+                            crate::app::notification::clear_all(app);
                             let _ = window.eval("window.__pakeOnToastActivated?.()");
                         }
                     }
@@ -473,6 +472,12 @@ pub fn run_app() {
             {
                 let _ = window.navigate(startup_url);
                 reveal_startup_window(window.clone(), init_fullscreen, &startup_window_revealed);
+            }
+
+            #[cfg(target_os = "windows")]
+            if std::env::args().any(|arg| arg.to_ascii_lowercase().contains("toastactivated")) {
+                crate::app::notification::clear_all(app.app_handle());
+                let _ = window.eval("window.__pakeOnToastActivated?.()");
             }
 
             // An explicit --dark-mode wins over the desktop preference.

@@ -176,14 +176,15 @@ pub fn send(
         .body(&params.body)
         .icon(&params.icon);
 
-    // On Windows, omitting sound makes notify-rust emit a silent toast.
-    // "Default" selects the OS notification sound while honoring Web
-    // Notification's silent option. Other platforms keep existing behavior.
+    // On Windows, auto-cancel toast on click and honor silent setting.
     #[cfg(target_os = "windows")]
-    let notification = if params.silent {
-        notification
-    } else {
-        notification.sound("Default")
+    let notification = {
+        let n = notification.auto_cancel(true);
+        if params.silent {
+            n
+        } else {
+            n.sound("Default")
+        }
     };
 
     notification
@@ -196,14 +197,56 @@ pub fn send(
     })
 }
 
+#[cfg(target_os = "windows")]
+fn clear_windows_history(app: &AppHandle) {
+    use windows::UI::Notifications::ToastNotificationManager;
+    use windows_core::HSTRING;
+
+    if let Ok(history) = ToastNotificationManager::History() {
+        let _ = history.Clear();
+
+        let identifier = app.config().identifier.clone();
+        if !identifier.is_empty() {
+            let h_id = HSTRING::from(identifier.as_str());
+            let _ = history.ClearWithId(&h_id);
+        }
+    }
+}
+
+/// Dismiss all delivered toasts from the Windows Action Center (drawer)
+/// for this application.
+#[cfg(target_os = "windows")]
+pub fn clear_all(app: &AppHandle) {
+    clear_windows_history(app);
+
+    // Delayed follow-up cleans up against Action Center activation transition races
+    let app_handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        clear_windows_history(&app_handle);
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn clear_all(_app: &AppHandle) {}
+
 /// Withdraw only the calling webview's notification. Other platforms retain
 /// their existing delivery path, which does not expose a withdrawal handle.
 pub fn close(app: &AppHandle, window: &WebviewWindow, id: &str) -> Result<(), String> {
-    validate_id(id)?;
-    #[cfg(target_os = "macos")]
-    return macos::withdraw(app, window.label(), id);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     {
+        let _ = (window, id);
+        clear_all(app);
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        validate_id(id)?;
+        macos::withdraw(app, window.label(), id)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        validate_id(id)?;
         let _ = (app, window);
         Ok(())
     }

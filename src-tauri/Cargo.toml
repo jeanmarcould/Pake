@@ -80,6 +80,10 @@ zbus = "5.14"
 webkit2gtk-sys = { version = "=2.0.2", features = ["v2_40"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+  "UI_Notifications",
+  "Data_Xml_Dom",
+] }
 windows-sys = { version = "0.61.2", features = [
   "Win32_Foundation",
   "Win32_Globalization",
