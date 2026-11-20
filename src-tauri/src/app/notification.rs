@@ -179,7 +179,7 @@ pub fn send(
     // On Windows, auto-cancel toast on click and honor silent setting.
     #[cfg(target_os = "windows")]
     let notification = {
-        let n = notification.auto_cancel(true);
+        let n = notification.auto_cancel();
         if params.silent {
             n
         } else {

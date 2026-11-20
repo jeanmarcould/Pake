@@ -229,6 +229,7 @@ jobs:
           
           Write-Host "Running: node dist/cli.js $($args -join ' ')"
           node dist/cli.js $args
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           git checkout -- src-tauri/Cargo.lock
 
@@ -284,3 +285,4 @@ jobs:
           name: ${{ inputs.name }}-Windows
           path: "**/*.msi"
           retention-days: 3
+          if-no-files-found: error
