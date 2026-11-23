@@ -1012,51 +1012,6 @@ document.addEventListener("DOMContentLoaded", () => {
     routeFrameLink(source, href);
   }
 
-  // Bridge Web App Badging API (used by Google Chat) to top-level document.title for Rust's native badge hook
-  if ("setAppBadge" in navigator) {
-    let appBadgeCount = 0;
-    const getTopDocument = () => {
-      try {
-        if (window.top && window.top.document) return window.top.document;
-      } catch (_) {}
-      return document;
-    };
-
-    const syncBadgeTitle = () => {
-      const targetDoc = getTopDocument();
-      const cleanTitle = targetDoc.title.replace(/^\(\d+\)\s*/, "");
-      const desiredTitle = appBadgeCount > 0 ? `(${appBadgeCount}) ${cleanTitle}` : cleanTitle;
-      if (targetDoc.title !== desiredTitle) {
-        targetDoc.title = desiredTitle;
-      }
-    };
-
-    navigator.setAppBadge = async (count = 1) => {
-      appBadgeCount = Number.isFinite(count) && count > 0 ? Math.floor(count) : 1;
-      syncBadgeTitle();
-    };
-
-    navigator.clearAppBadge = async () => {
-      appBadgeCount = 0;
-      syncBadgeTitle();
-    };
-
-    const attachTitleObserver = () => {
-      const targetDoc = getTopDocument();
-      const target = targetDoc.querySelector("title") || targetDoc.head;
-      if (!target) return;
-      new MutationObserver(() => {
-        if (appBadgeCount > 0) syncBadgeTitle();
-      }).observe(target, { childList: true, subtree: true, characterData: true });
-    };
-
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", attachTitleObserver, { once: true });
-    } else {
-      attachTitleObserver();
-    }
-  }
-
   // Bridge ServiceWorker/iframe notifications (used by Google Chat) & deduplicate across windows
   if (typeof window.Notification === "function" && !window.Notification.__pakeDeduped) {
     const getTopNotificationCtor = () => {
@@ -1583,10 +1538,51 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   let permVal = "granted";
-  // Pages that drive the badge directly via setAppBadge own its lifecycle;
-  // notifications-driven counts auto-clear on the next user interaction.
-  let pageManagedBadge = false;
   let autoBadgeActive = false;
+  let appBadgeCount = 0;
+
+  const getTopDocument = () => {
+    try {
+      if (window.top && window.top.document) return window.top.document;
+    } catch (_) {}
+    return document;
+  };
+
+  const syncBadgeTitle = () => {
+    try {
+      const targetDoc = getTopDocument();
+      if (!targetDoc || typeof targetDoc.title !== "string") return;
+      const cleanTitle = targetDoc.title.replace(/^\(\d+\)\s*/, "");
+      const desiredTitle =
+        appBadgeCount > 0 ? `(${appBadgeCount}) ${cleanTitle}` : cleanTitle;
+      if (targetDoc.title !== desiredTitle) {
+        targetDoc.title = desiredTitle;
+      }
+    } catch (_) {}
+  };
+
+  const attachTitleObserver = () => {
+    try {
+      const targetDoc = getTopDocument();
+      const target = targetDoc.querySelector("title") || targetDoc.head;
+      if (!target) return;
+      new MutationObserver(() => {
+        if (appBadgeCount > 0) syncBadgeTitle();
+      }).observe(target, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    } catch (_) {}
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", attachTitleObserver, {
+      once: true,
+    });
+  } else {
+    attachTitleObserver();
+  }
 
   const normalizeBadgeCount = (count) => {
     if (typeof count !== "number" || !Number.isFinite(count)) {
@@ -1596,20 +1592,19 @@ document.addEventListener("DOMContentLoaded", () => {
     return normalized > 0 ? Math.min(normalized, 99999) : null;
   };
   const setBadge = (count) => {
-    pageManagedBadge = true;
-    autoBadgeActive = false;
+    appBadgeCount = count || 0;
+    syncBadgeTitle();
     return invoke("set_dock_badge", { count }).catch(() => {});
   };
   const clearBadge = () => invoke("clear_dock_badge").catch(() => {});
   const setLabel = (label) => {
-    pageManagedBadge = true;
-    autoBadgeActive = false;
+    appBadgeCount = label ? 1 : 0;
+    syncBadgeTitle();
     return invoke("set_dock_badge_label", { label }).catch(() => {});
   };
   const incrementAutoBadge = () => {
-    if (pageManagedBadge) return Promise.resolve();
     autoBadgeActive = true;
-    return invoke("increment_dock_badge").catch(() => {});
+    return Promise.resolve();
   };
 
   // Notification click routing.
@@ -1648,6 +1643,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const dismissAllNotifications = () => {
     pendingFocusClick = null;
+    autoBadgeActive = false;
+    clearBadge();
     const ids = Array.from(liveNotifications.keys());
     for (const id of ids) {
       const notif = liveNotifications.get(id);
@@ -1684,7 +1681,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // A real interaction means the user is already reading the page, so a later
     // focus is an app switch rather than a notification click.
     pendingFocusClick = null;
-    if (pageManagedBadge || !autoBadgeActive) return;
+    if (!autoBadgeActive) return;
     autoBadgeActive = false;
     clearBadge();
   };
@@ -1767,7 +1764,7 @@ document.addEventListener("DOMContentLoaded", () => {
             forgetNotification(id);
             // The dock badge is shared, and the window that raised the copy
             // counted it. Reading here must still clear it.
-            if (unread && !pageManagedBadge) autoBadgeActive = true;
+            if (unread) autoBadgeActive = true;
             return undefined;
           }
           if (
@@ -1780,6 +1777,7 @@ document.addEventListener("DOMContentLoaded", () => {
           }
           this.dispatchEvent(new Event("show"));
           if (unread) return incrementAutoBadge();
+          return clearBadge();
         })
         .catch(() => {
           if (liveNotifications.get(id) !== this) return;
@@ -1859,16 +1857,12 @@ document.addEventListener("DOMContentLoaded", () => {
       return Promise.reject(error);
     }
     if (normalized === null) {
-      pageManagedBadge = false;
-      autoBadgeActive = false;
-      return clearBadge();
+      return setBadge(null);
     }
     return setBadge(normalized);
   };
   const clearAppBadge = () => {
-    pageManagedBadge = false;
-    autoBadgeActive = false;
-    return clearBadge();
+    return setBadge(null);
   };
   try {
     Object.defineProperty(navigator, "setAppBadge", {

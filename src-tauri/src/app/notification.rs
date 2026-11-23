@@ -191,6 +191,8 @@ pub fn send(
         .show()
         .map_err(|e| format!("Failed to show notification: {e}"))?;
 
+    crate::app::invoke::on_notification_sent(app);
+
     Ok(NotificationOutcome {
         native_click: false,
         suppressed: false,

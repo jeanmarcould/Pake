@@ -289,15 +289,19 @@ pub fn run_app() {
     let init_fullscreen = pake_config.windows[0].fullscreen;
     let start_to_tray = pake_config.windows[0].start_to_tray && show_system_tray;
 
-    // Only Gmail and Google Chat stay resident in the system tray;
-    // all other apps (Meet, Gemini, Calendar, etc.) have no tray icon and cold-exit on X.
+    // Only Gmail, Google Chat, and Calendar stay resident in the system tray;
+    // all other apps (Meet, Gemini, etc.) have no tray icon and cold-exit on X.
     let product_lower = tauri_config
         .product_name
         .as_deref()
         .unwrap_or("")
         .to_lowercase();
-    let is_tray_app =
-        product_lower == "gmail" || product_lower == "google chat" || product_lower == "googlechat";
+    let is_tray_app = product_lower == "gmail"
+        || product_lower == "google chat"
+        || product_lower == "googlechat"
+        || product_lower == "calendar"
+        || product_lower == "google calendar"
+        || product_lower == "googlecalendar";
     let show_system_tray = is_tray_app;
     let hide_on_close = is_tray_app;
     let start_to_tray = start_to_tray && is_tray_app;
@@ -368,6 +372,7 @@ pub fn run_app() {
 
                         if is_toast_activation {
                             crate::app::notification::clear_all(app);
+                            crate::app::invoke::clear_notify_badge(app);
                             let _ = window.eval("window.__pakeOnToastActivated?.()");
                         }
                     }
@@ -477,6 +482,7 @@ pub fn run_app() {
             #[cfg(target_os = "windows")]
             if std::env::args().any(|arg| arg.to_ascii_lowercase().contains("toastactivated")) {
                 crate::app::notification::clear_all(app.app_handle());
+                crate::app::invoke::clear_notify_badge(app.app_handle());
                 let _ = window.eval("window.__pakeOnToastActivated?.()");
             }
 
@@ -543,6 +549,9 @@ pub fn run_app() {
                     save_last_url(_window.app_handle());
                 }
                 if hide_on_close && _window.label() == "pake" {
+                    // User dismissed the window; clear any transient notification badge
+                    // while keeping any real unread message count from the page title.
+                    crate::app::invoke::clear_notify_badge(_window.app_handle());
                     // User dismissed the window; do not let startup reveal reopen it.
                     cancel_startup_reveal(&close_revealed);
                     // Hide window when hide_on_close is enabled (regardless of tray status)

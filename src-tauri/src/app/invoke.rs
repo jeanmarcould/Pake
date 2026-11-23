@@ -17,9 +17,16 @@ use tokio::io::AsyncWriteExt;
 
 use tauri::Theme;
 
-static BADGE_COUNT: AtomicI64 = AtomicI64::new(0);
+static TITLE_BADGE_COUNT: AtomicI64 = AtomicI64::new(0);
+static NOTIFY_BADGE_COUNT: AtomicI64 = AtomicI64::new(0);
 const MAX_BADGE_COUNT: i64 = 99_999;
 const MAX_BADGE_LABEL_CHARS: usize = 16;
+
+fn effective_badge_count() -> i64 {
+    TITLE_BADGE_COUNT
+        .load(Ordering::SeqCst)
+        .max(NOTIFY_BADGE_COUNT.load(Ordering::SeqCst))
+}
 
 fn normalize_badge_count(count: Option<i64>) -> Option<i64> {
     count.filter(|n| (1..=MAX_BADGE_COUNT).contains(n))
@@ -248,51 +255,70 @@ fn apply_badge_label(app: &AppHandle, label: Option<&str>) -> Result<(), String>
         .map_err(|e| format!("Failed to set taskbar overlay icon: {e}"))
 }
 
+#[cfg(target_os = "windows")]
+fn schedule_windows_badge_reassert(app: &AppHandle) {
+    let app_handle = app.clone();
+    std::thread::spawn(move || {
+        for delay_secs in [3, 7, 12] {
+            std::thread::sleep(std::time::Duration::from_secs(delay_secs));
+            let latest = effective_badge_count();
+            if latest > 0 {
+                let _ = apply_badge(&app_handle, Some(latest));
+            } else {
+                break;
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn schedule_windows_badge_reassert(_app: &AppHandle) {}
+
 pub fn reapply_current_badge(app: &AppHandle) {
-    let current = BADGE_COUNT.load(Ordering::SeqCst);
+    let current = effective_badge_count();
     if current > 0 {
         let _ = apply_badge(app, Some(current));
+    }
+}
+
+pub fn on_notification_sent(app: &AppHandle) {
+    let current = NOTIFY_BADGE_COUNT.load(Ordering::SeqCst);
+    let next = current.saturating_add(1).clamp(1, MAX_BADGE_COUNT);
+    NOTIFY_BADGE_COUNT.store(next, Ordering::SeqCst);
+    let effective = effective_badge_count();
+    let _ = apply_badge(app, Some(effective));
+    schedule_windows_badge_reassert(app);
+}
+
+pub fn clear_notify_badge(app: &AppHandle) {
+    if NOTIFY_BADGE_COUNT.swap(0, Ordering::SeqCst) > 0 {
+        let effective = normalize_badge_count(Some(effective_badge_count()));
+        let _ = apply_badge(app, effective);
     }
 }
 
 pub fn sync_badge_from_title(app: &AppHandle, count: u32) {
     let normalized = normalize_badge_count(Some(count as i64));
     let val = normalized.unwrap_or(0);
-    
-    // Debounce Google Chat's SPA 0-count title resets to prevent flickering
+
+    // Debounce Google Chat's SPA 0-count title resets to prevent flickering,
+    // and never wipe out an active notification badge while NOTIFY_BADGE_COUNT > 0.
     if val == 0 {
-        let current = BADGE_COUNT.load(Ordering::SeqCst);
-        if current > 0 {
+        let previous_effective = effective_badge_count();
+        TITLE_BADGE_COUNT.store(0, Ordering::SeqCst);
+        if previous_effective > 0 {
             let app_handle = app.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(800));
-                // If it is STILL 0 after the delay, safely clear it
-                if BADGE_COUNT.load(Ordering::SeqCst) == 0 {
-                    let _ = apply_badge(&app_handle, Some(0));
-                }
+                let latest = effective_badge_count();
+                let _ = apply_badge(&app_handle, normalize_badge_count(Some(latest)));
             });
         }
-        BADGE_COUNT.store(0, Ordering::SeqCst);
     } else {
-        BADGE_COUNT.store(val, Ordering::SeqCst);
-        let _ = apply_badge(app, normalized);
-        
-        // Re-assert the taskbar overlay after Explorer redraws the button
-        #[cfg(target_os = "windows")]
-        {
-            let app_handle = app.clone();
-            std::thread::spawn(move || {
-                for delay_secs in [3, 7, 12] {
-                    std::thread::sleep(std::time::Duration::from_secs(delay_secs));
-                    let latest = BADGE_COUNT.load(Ordering::SeqCst);
-                    if latest > 0 {
-                        let _ = apply_badge(&app_handle, Some(latest));
-                    } else {
-                        break;
-                    }
-                }
-            });
-        }
+        TITLE_BADGE_COUNT.store(val, Ordering::SeqCst);
+        let effective = effective_badge_count();
+        let _ = apply_badge(app, Some(effective));
+        schedule_windows_badge_reassert(app);
     }
 }
 
@@ -690,29 +716,41 @@ pub fn close_notification(app: AppHandle, window: WebviewWindow, id: String) -> 
 #[command]
 pub fn set_dock_badge(app: AppHandle, count: Option<i64>) -> Result<(), String> {
     let normalized = normalize_badge_count(count);
-    BADGE_COUNT.store(normalized.unwrap_or(0), Ordering::SeqCst);
-    apply_badge(&app, normalized)
+    TITLE_BADGE_COUNT.store(normalized.unwrap_or(0), Ordering::SeqCst);
+    let effective = normalize_badge_count(Some(effective_badge_count()));
+    let res = apply_badge(&app, effective);
+    if effective.is_some() {
+        schedule_windows_badge_reassert(&app);
+    }
+    res
 }
 
 #[command]
 pub fn increment_dock_badge(app: AppHandle) -> Result<(), String> {
-    let current = BADGE_COUNT.load(Ordering::SeqCst);
-    let next = current.saturating_add(1).clamp(1, MAX_BADGE_COUNT);
-    BADGE_COUNT.store(next, Ordering::SeqCst);
-    apply_badge(&app, Some(next))
+    on_notification_sent(&app);
+    Ok(())
 }
 
 #[command]
 pub fn clear_dock_badge(app: AppHandle) -> Result<(), String> {
-    BADGE_COUNT.store(0, Ordering::SeqCst);
-    apply_badge(&app, None)
+    NOTIFY_BADGE_COUNT.store(0, Ordering::SeqCst);
+    let effective = normalize_badge_count(Some(effective_badge_count()));
+    apply_badge(&app, effective)
 }
 
 #[command]
 pub fn set_dock_badge_label(app: AppHandle, label: Option<String>) -> Result<(), String> {
-    BADGE_COUNT.store(0, Ordering::SeqCst);
     let label = normalize_badge_label(label.as_deref())?;
-    apply_badge_label(&app, label.as_deref())
+    if label.is_some() {
+        TITLE_BADGE_COUNT.store(1, Ordering::SeqCst);
+        let res = apply_badge_label(&app, label.as_deref());
+        schedule_windows_badge_reassert(&app);
+        res
+    } else {
+        TITLE_BADGE_COUNT.store(0, Ordering::SeqCst);
+        let effective = normalize_badge_count(Some(effective_badge_count()));
+        apply_badge(&app, effective)
+    }
 }
 
 #[command]
