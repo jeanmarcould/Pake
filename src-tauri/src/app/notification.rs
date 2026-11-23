@@ -150,6 +150,24 @@ pub fn send(
 ) -> Result<NotificationOutcome, String> {
     validate_id(&params.id)?;
 
+    // Suppress notifications from Gemini when the Gemini window is already focused.
+    let is_gemini = app
+        .config()
+        .product_name
+        .as_deref()
+        .is_some_and(|name| name.eq_ignore_ascii_case("gemini"))
+        || window
+            .url()
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.eq_ignore_ascii_case("gemini.google.com")))
+            .unwrap_or(false);
+    if is_gemini && window.is_focused().unwrap_or(false) {
+        return Ok(NotificationOutcome {
+            native_click: false,
+            suppressed: true,
+        });
+    }
+
     // Only a native click reaches the exact window that raised the copy. The
     // focus fallback arms each window separately, so a copy suppressed there
     // would drop the click when the OS activates that window instead.
@@ -237,8 +255,13 @@ pub fn clear_all(_app: &AppHandle) {}
 pub fn close(app: &AppHandle, window: &WebviewWindow, id: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        let _ = (window, id);
-        clear_all(app);
+        let _ = window;
+        // Only clear the Windows Action Center history on explicit user dismissal
+        // ("__all__"), never when a background webpage auto-closes its Notification
+        // object on a timer a second after showing it.
+        if id == "__all__" {
+            clear_all(app);
+        }
         Ok(())
     }
     #[cfg(target_os = "macos")]

@@ -1684,6 +1684,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!autoBadgeActive) return;
     autoBadgeActive = false;
     clearBadge();
+    withdrawNotification("__all__");
   };
   document.addEventListener("click", clearAutoBadge, true);
   document.addEventListener("keydown", clearAutoBadge, true);
@@ -1763,8 +1764,9 @@ document.addEventListener("DOMContentLoaded", () => {
           if (outcome?.suppressed) {
             forgetNotification(id);
             // The dock badge is shared, and the window that raised the copy
-            // counted it. Reading here must still clear it.
-            if (unread) autoBadgeActive = true;
+            // counted it. Reading here must still clear it (unless suppressed
+            // because the window itself was already focused).
+            if (unread && raisedInBackground) autoBadgeActive = true;
             return undefined;
           }
           if (
