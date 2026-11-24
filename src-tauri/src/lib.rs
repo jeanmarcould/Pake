@@ -296,12 +296,13 @@ pub fn run_app() {
         .as_deref()
         .unwrap_or("")
         .to_lowercase();
+    let is_calendar_app = product_lower == "calendar"
+        || product_lower == "google calendar"
+        || product_lower == "googlecalendar";
     let is_tray_app = product_lower == "gmail"
         || product_lower == "google chat"
         || product_lower == "googlechat"
-        || product_lower == "calendar"
-        || product_lower == "google calendar"
-        || product_lower == "googlecalendar";
+        || is_calendar_app;
     let show_system_tray = is_tray_app;
     let hide_on_close = is_tray_app;
     let start_to_tray = start_to_tray && is_tray_app;
@@ -507,6 +508,17 @@ pub fn run_app() {
                 startup_window_revealed.clone(),
             )?;
 
+            if is_calendar_app {
+                let cal_app = app.app_handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(25)).await;
+                    loop {
+                        crate::app::invoke::trigger_calendar_export(&cal_app, true);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(600)).await;
+                    }
+                });
+            }
+
             // Show window after state restoration to prevent position flashing
             // once its first page finishes. A fallback keeps offline or stalled
             // pages reachable without exposing a blank webview during normal startup.
@@ -541,10 +553,18 @@ pub fn run_app() {
                         crate::app::invoke::set_gmail_low_memory(_window.app_handle(), false);
                         crate::app::invoke::reapply_current_badge(_window.app_handle());
                     }
+                    tauri::WindowEvent::Focused(false) => {
+                        if is_calendar_app {
+                            crate::app::invoke::trigger_calendar_export(_window.app_handle(), false);
+                        }
+                    }
                     _ => {}
                 }
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = _event {
+                if is_calendar_app && _window.label() == "pake" {
+                    crate::app::invoke::trigger_calendar_export(_window.app_handle(), false);
+                }
                 if remember_url && _window.label() == "pake" {
                     save_last_url(_window.app_handle());
                 }

@@ -5,7 +5,7 @@ use crate::util::{
     sanitize_download_filename, show_toast, MessageType,
 };
 use std::str::FromStr;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use tauri::http::Method;
 use tauri::{command, AppHandle, Manager, Url, WebviewWindow};
@@ -356,6 +356,86 @@ pub fn set_gmail_low_memory(app: &AppHandle, low: bool) {
         });
     }
 }
+
+#[cfg(target_os = "windows")]
+static LAST_CALENDAR_EXPORT_SECS: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(target_os = "windows")]
+pub fn trigger_calendar_export(app: &AppHandle, force: bool) {
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let prev = LAST_CALENDAR_EXPORT_SECS.load(Ordering::SeqCst);
+    if !force && now_secs.saturating_sub(prev) < 120 {
+        return;
+    }
+
+    let Some(window) = app.get_webview_window("pake") else {
+        return;
+    };
+    let Ok(current_url) = window.url() else {
+        return;
+    };
+    if !current_url
+        .host_str()
+        .is_some_and(|h| h.eq_ignore_ascii_case("calendar.google.com"))
+    {
+        return;
+    }
+
+    LAST_CALENDAR_EXPORT_SECS.store(now_secs, Ordering::SeqCst);
+
+    let user_agent = app
+        .try_state::<crate::app::window::MultiWindowState>()
+        .map(|state| state.pake_config.user_agent.get().clone());
+
+    tauri::async_runtime::spawn(async move {
+        let Ok(export_url) = Url::from_str("https://calendar.google.com/calendar/exporticalzip")
+        else {
+            return;
+        };
+        let Ok(client) = download_client() else {
+            return;
+        };
+        let Ok(response) = download_response(
+            client,
+            export_url,
+            user_agent.as_deref(),
+            Some("https://calendar.google.com/calendar/u/0/r"),
+            |target| cookie_header_for_url(&window, target),
+        )
+        .await
+        else {
+            return;
+        };
+        if !response.status().is_success() {
+            return;
+        }
+        let Ok(bytes) = response.bytes().await else {
+            return;
+        };
+        // Verify ZIP magic bytes (PK\x03\x04) so an HTML login redirect never overwrites the cache.
+        if bytes.len() < 4 || &bytes[..4] != b"PK\x03\x04" {
+            return;
+        }
+        let Ok(local_app_data) = std::env::var("LOCALAPPDATA") else {
+            return;
+        };
+        let dir = std::path::PathBuf::from(local_app_data).join("PakeSuite");
+        if tokio::fs::create_dir_all(&dir).await.is_err() {
+            return;
+        }
+        let tmp_path = dir.join("gcal-export.zip.tmp");
+        let final_path = dir.join("gcal-export.zip");
+        if tokio::fs::write(&tmp_path, &bytes).await.is_ok() {
+            let _ = tokio::fs::rename(&tmp_path, &final_path).await;
+        }
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn trigger_calendar_export(_app: &AppHandle, _force: bool) {}
 
 #[derive(serde::Deserialize)]
 pub struct DownloadFileParams {
