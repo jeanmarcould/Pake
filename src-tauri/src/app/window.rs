@@ -728,13 +728,20 @@ fn build_window(
         });
     }
 
-    window_builder = window_builder.on_document_title_changed(|window, title| {
+    let badge_product_lower = tauri_config
+        .product_name
+        .as_deref()
+        .unwrap_or("")
+        .to_lowercase();
+    let skip_title_badge =
+        badge_product_lower == "apple music" || badge_product_lower == "applemusic";
+    window_builder = window_builder.on_document_title_changed(move |window, title| {
         #[cfg(target_os = "windows")]
-        {
+        if !skip_title_badge {
             let count = extract_unread_count(&title);
             crate::app::invoke::sync_badge_from_title(window.app_handle(), count);
         }
-        let _ = (&window, &title);
+        let _ = (&window, &title, skip_title_badge);
     });
 
     // Add initialization scripts. Order matters: pakeConfig must land before
@@ -1048,7 +1055,11 @@ fn build_window(
                 let is_same_app = nav_app_host
                     .as_deref()
                     .is_some_and(|h| host.eq_ignore_ascii_case(h));
-                let is_auth = host.eq_ignore_ascii_case("accounts.google.com");
+                let is_auth = host.eq_ignore_ascii_case("accounts.google.com")
+                    || host.eq_ignore_ascii_case("appleid.apple.com")
+                    || host.eq_ignore_ascii_case("idmsa.apple.com")
+                    || host.eq_ignore_ascii_case("account.apple.com")
+                    || host.eq_ignore_ascii_case("authorize.music.apple.com");
 
                 if !is_same_app && !is_auth {
                     let url_str = target_url.to_string();

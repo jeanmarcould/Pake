@@ -289,8 +289,8 @@ pub fn run_app() {
     let init_fullscreen = pake_config.windows[0].fullscreen;
     let start_to_tray = pake_config.windows[0].start_to_tray && show_system_tray;
 
-    // Only Gmail, Google Chat, and Calendar stay resident in the system tray;
-    // all other apps (Meet, Gemini, etc.) have no tray icon and cold-exit on X.
+    // Only Gmail, Google Chat, Calendar, and Apple Music stay resident in the system tray;
+    // all other apps (Meet, Gemini, iCloud, etc.) have no tray icon and cold-exit on X.
     let product_lower = tauri_config
         .product_name
         .as_deref()
@@ -299,10 +299,12 @@ pub fn run_app() {
     let is_calendar_app = product_lower == "calendar"
         || product_lower == "google calendar"
         || product_lower == "googlecalendar";
+    let is_apple_music_app = product_lower == "apple music" || product_lower == "applemusic";
     let is_tray_app = product_lower == "gmail"
         || product_lower == "google chat"
         || product_lower == "googlechat"
-        || is_calendar_app;
+        || is_calendar_app
+        || is_apple_music_app;
     let show_system_tray = is_tray_app;
     let hide_on_close = is_tray_app;
     let start_to_tray = start_to_tray && is_tray_app;

@@ -326,6 +326,16 @@ static GMAIL_LOW_MEMORY: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 pub fn set_gmail_low_memory(app: &AppHandle, low: bool) {
+    if low {
+        let is_apple_music = app.config().product_name.as_deref().is_some_and(|name| {
+            let lower = name.to_lowercase();
+            lower == "apple music" || lower == "applemusic"
+        });
+        if is_apple_music {
+            return;
+        }
+    }
+
     if GMAIL_LOW_MEMORY.swap(low, Ordering::SeqCst) == low {
         return;
     }

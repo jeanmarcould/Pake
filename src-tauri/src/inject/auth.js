@@ -11,6 +11,9 @@ function matchesAuthUrl(url, baseUrl = window.location.href) {
       /^accounts\.google\.(?:com|[a-z]{2}|com\.[a-z]{2}|co\.[a-z]{2})$/,
       /^login\.microsoftonline\.com$/,
       /^appleid\.apple\.com$/,
+      /^idmsa\.apple\.com$/,
+      /^account\.apple\.com$/,
+      /^authorize\.music\.apple\.com$/,
     ];
     // Match complete path segments, including nested identity-provider routes.
     // /login-tips is content; /tenant/login remains an authentication endpoint.
