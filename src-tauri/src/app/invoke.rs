@@ -368,6 +368,28 @@ pub fn set_gmail_low_memory(app: &AppHandle, low: bool) {
 }
 
 #[cfg(target_os = "windows")]
+fn log_calendar_export(msg: &str) {
+    let Ok(local_app_data) = std::env::var("LOCALAPPDATA") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(local_app_data).join("PakeSuite");
+    let _ = std::fs::create_dir_all(&dir);
+    let log_path = dir.join("gcal-export.log");
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "[{ts}] {msg}");
+    }
+}
+
+#[cfg(target_os = "windows")]
 static LAST_CALENDAR_EXPORT_SECS: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_os = "windows")]
@@ -382,15 +404,18 @@ pub fn trigger_calendar_export(app: &AppHandle, force: bool) {
     }
 
     let Some(window) = app.get_webview_window("pake") else {
+        log_calendar_export("skip: window 'pake' not found");
         return;
     };
     let Ok(current_url) = window.url() else {
+        log_calendar_export("skip: window.url() failed");
         return;
     };
     if !current_url
         .host_str()
         .is_some_and(|h| h.eq_ignore_ascii_case("calendar.google.com"))
     {
+        log_calendar_export(&format!("skip: host is not calendar.google.com ({current_url})"));
         return;
     }
 
@@ -406,9 +431,10 @@ pub fn trigger_calendar_export(app: &AppHandle, force: bool) {
             return;
         };
         let Ok(client) = download_client() else {
+            log_calendar_export("err: download_client failed");
             return;
         };
-        let Ok(response) = download_response(
+        let response = match download_response(
             client,
             export_url,
             user_agent.as_deref(),
@@ -416,17 +442,33 @@ pub fn trigger_calendar_export(app: &AppHandle, force: bool) {
             |target| cookie_header_for_url(&window, target),
         )
         .await
-        else {
-            return;
+        {
+            Ok(resp) => resp,
+            Err(err) => {
+                log_calendar_export(&format!("err: download_response failed: {err}"));
+                return;
+            }
         };
-        if !response.status().is_success() {
+        let status = response.status();
+        let final_url = response.url().clone();
+        if !status.is_success() {
+            log_calendar_export(&format!("err: status={status} url={final_url}"));
             return;
         }
-        let Ok(bytes) = response.bytes().await else {
-            return;
+        let bytes = match response.bytes().await {
+            Ok(b) => b,
+            Err(err) => {
+                log_calendar_export(&format!("err: reading bytes failed: {err}"));
+                return;
+            }
         };
         // Verify ZIP magic bytes (PK\x03\x04) so an HTML login redirect never overwrites the cache.
         if bytes.len() < 4 || &bytes[..4] != b"PK\x03\x04" {
+            let preview = String::from_utf8_lossy(&bytes[..bytes.len().min(120)]);
+            log_calendar_export(&format!(
+                "err: not a zip (len={}, url={final_url}): {preview:?}",
+                bytes.len()
+            ));
             return;
         }
         let Ok(local_app_data) = std::env::var("LOCALAPPDATA") else {
@@ -434,13 +476,20 @@ pub fn trigger_calendar_export(app: &AppHandle, force: bool) {
         };
         let dir = std::path::PathBuf::from(local_app_data).join("PakeSuite");
         if tokio::fs::create_dir_all(&dir).await.is_err() {
+            log_calendar_export("err: create_dir_all failed");
             return;
         }
         let tmp_path = dir.join("gcal-export.zip.tmp");
         let final_path = dir.join("gcal-export.zip");
-        if tokio::fs::write(&tmp_path, &bytes).await.is_ok() {
-            let _ = tokio::fs::rename(&tmp_path, &final_path).await;
+        if let Err(err) = tokio::fs::write(&tmp_path, &bytes).await {
+            log_calendar_export(&format!("err: write tmp failed: {err}"));
+            return;
         }
+        if let Err(err) = tokio::fs::rename(&tmp_path, &final_path).await {
+            log_calendar_export(&format!("err: rename failed: {err}"));
+            return;
+        }
+        log_calendar_export(&format!("ok: wrote {} bytes", bytes.len()));
     });
 }
 
