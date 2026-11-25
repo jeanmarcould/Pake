@@ -304,6 +304,13 @@ pub fn run_app() {
         || product_lower == "google calendar"
         || product_lower == "googlecalendar"
         || is_calendar_url;
+    #[cfg(target_os = "windows")]
+    if is_calendar_app {
+        crate::app::invoke::log_calendar_export(&format!(
+            "run_app: product={product_lower:?} url={:?} is_calendar_app={is_calendar_app}",
+            pake_config.windows.first().map(|w| w.url.as_str())
+        ));
+    }
     let is_apple_music_app = product_lower == "apple music" || product_lower == "applemusic";
     let is_tray_app = product_lower == "gmail"
         || product_lower == "google chat"
@@ -449,6 +456,10 @@ pub fn run_app() {
             reveal_download,
         ])
         .setup(move |app| {
+            #[cfg(target_os = "windows")]
+            if is_calendar_app {
+                crate::app::invoke::log_calendar_export("setup: entered");
+            }
             // Grant remote IPC only to the immutable, packaged entry origins,
             // before any webview can start loading untrusted content.
             if let Some(capability) = pake_config.remote_capability()? {
@@ -477,6 +488,10 @@ pub fn run_app() {
             // --- Menu Construction End ---
 
             let window = set_window(app.app_handle(), &pake_config, &tauri_config)?;
+            #[cfg(target_os = "windows")]
+            if is_calendar_app {
+                crate::app::invoke::log_calendar_export("setup: after set_window");
+            }
 
             if let Some(startup_url) = std::env::args()
                 .skip(1)
