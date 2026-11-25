@@ -368,7 +368,7 @@ pub fn set_gmail_low_memory(app: &AppHandle, low: bool) {
 }
 
 #[cfg(target_os = "windows")]
-fn log_calendar_export(msg: &str) {
+pub fn log_calendar_export(msg: &str) {
     let Ok(local_app_data) = std::env::var("LOCALAPPDATA") else {
         return;
     };

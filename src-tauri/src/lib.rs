@@ -296,9 +296,14 @@ pub fn run_app() {
         .as_deref()
         .unwrap_or("")
         .to_lowercase();
+    let is_calendar_url = pake_config
+        .windows
+        .first()
+        .is_some_and(|w| w.url.to_lowercase().contains("calendar.google.com"));
     let is_calendar_app = product_lower == "calendar"
         || product_lower == "google calendar"
-        || product_lower == "googlecalendar";
+        || product_lower == "googlecalendar"
+        || is_calendar_url;
     let is_apple_music_app = product_lower == "apple music" || product_lower == "applemusic";
     let is_tray_app = product_lower == "gmail"
         || product_lower == "google chat"
@@ -511,9 +516,11 @@ pub fn run_app() {
             )?;
 
             if is_calendar_app {
+                #[cfg(target_os = "windows")]
+                crate::app::invoke::log_calendar_export("startup: is_calendar_app=true, scheduling loop");
                 let cal_app = app.app_handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(25)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_secs(8)).await;
                     loop {
                         crate::app::invoke::trigger_calendar_export(&cal_app, true);
                         tokio::time::sleep(tokio::time::Duration::from_secs(600)).await;
