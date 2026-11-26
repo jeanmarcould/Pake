@@ -995,6 +995,36 @@ pub fn reveal_download(app: AppHandle) -> Result<(), String> {
     tauri_plugin_opener::reveal_item_in_dir(path).map_err(|error| error.to_string())
 }
 
+#[command]
+pub async fn save_gcal_export_zip(app: AppHandle, bytes: Vec<u8>) -> Result<String, String> {
+    if bytes.len() < 4 || &bytes[0..2] != b"PK" {
+        return Err("Downloaded payload is not a valid ZIP archive".to_string());
+    }
+
+    let local_app_data = std::env::var("LOCALAPPDATA")
+        .map_err(|e| format!("LOCALAPPDATA not found: {e}"))?;
+    let target_dir = std::path::PathBuf::from(local_app_data).join("PakeSuite");
+    std::fs::create_dir_all(&target_dir)
+        .map_err(|e| format!("Failed to create PakeSuite directory: {e}"))?;
+
+    let target_zip = target_dir.join("gcal-export.zip");
+    let temp_zip = target_dir.join("gcal-export.zip.tmp");
+
+    tokio::fs::write(&temp_zip, &bytes)
+        .await
+        .map_err(|e| format!("Failed to write temp export zip: {e}"))?;
+
+    if target_zip.exists() {
+        let _ = tokio::fs::remove_file(&target_zip).await;
+    }
+    tokio::fs::rename(&temp_zip, &target_zip)
+        .await
+        .map_err(|e| format!("Failed to finalize gcal-export.zip: {e}"))?;
+
+    let _ = app;
+    Ok(target_zip.to_string_lossy().into_owned())
+}
+
 /// Quit for the injected Ctrl+Q on Windows and Linux, which have no app menu to carry it.
 /// Saves the window state with the same flags as the tray's Quit.
 #[command]
