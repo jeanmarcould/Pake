@@ -453,6 +453,7 @@ pub fn run_app() {
             webview_navigate,
             set_title_bar_color,
             quit_app,
+            save_gcal_export_zip,
             reveal_download,
         ])
         .setup(move |app| {
