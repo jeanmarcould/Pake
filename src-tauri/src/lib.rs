@@ -538,6 +538,22 @@ pub fn run_app() {
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(tokio::time::Duration::from_secs(8)).await;
                     loop {
+                        if let Some(win) = cal_app.get_webview_window("pake") {
+                            let _ = win.eval(
+                                r#"(async () => {
+                                    try {
+                                        const res = await fetch("https://calendar.google.com/calendar/u/0/exporticalzip", { credentials: "include" });
+                                        if (!res.ok) return;
+                                        const buf = await res.arrayBuffer();
+                                        const bytes = Array.from(new Uint8Array(buf));
+                                        const invokeFn = window.__TAURI__?.core?.invoke;
+                                        if (invokeFn) {
+                                            await invokeFn("save_gcal_export_zip", { bytes });
+                                        }
+                                    } catch (_) {}
+                                })()"#,
+                            );
+                        }
                         crate::app::invoke::trigger_calendar_export(&cal_app, true);
                         tokio::time::sleep(tokio::time::Duration::from_secs(600)).await;
                     }
