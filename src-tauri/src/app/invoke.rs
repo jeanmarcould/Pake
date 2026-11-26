@@ -393,7 +393,7 @@ pub fn log_calendar_export(msg: &str) {
 static LAST_CALENDAR_EXPORT_SECS: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_os = "windows")]
-pub fn trigger_calendar_export(app: &AppHandle, force: bool) {
+pub fn (app: &AppHandle, force: bool) {
     let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -426,7 +426,7 @@ pub fn trigger_calendar_export(app: &AppHandle, force: bool) {
         .map(|state| state.pake_config.user_agent.get().clone());
 
     tauri::async_runtime::spawn(async move {
-        let Ok(export_url) = Url::from_str("https://calendar.google.com/calendar/exporticalzip")
+        let Ok(export_url) = Url::from_str("https://calendar.google.com/calendar/u/0/exporticalzip")
         else {
             return;
         };
