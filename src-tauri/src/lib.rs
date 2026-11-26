@@ -32,8 +32,8 @@ use app::window::enter_configured_fullscreen;
 use app::{
     invoke::{
         clear_dock_badge, close_notification, download_file, increment_dock_badge, quit_app,
-        reveal_download, send_notification, set_dock_badge, set_dock_badge_label,
-        set_title_bar_color, set_zoom, update_theme_mode, webview_navigate,
+        reveal_download, save_gcal_export_zip, send_notification, set_dock_badge,
+        set_dock_badge_label, set_title_bar_color, set_zoom, update_theme_mode, webview_navigate,
     },
     setup::{set_global_shortcut, set_system_tray},
     window::{
