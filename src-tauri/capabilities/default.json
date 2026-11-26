@@ -21,6 +21,7 @@
     "allow-webview-navigate",
     "allow-set-title-bar-color",
     "allow-quit-app",
+    "allow-save-gcal-export-zip",
     "allow-reveal-download",
     "shell:allow-open",
     "core:window:allow-theme",
