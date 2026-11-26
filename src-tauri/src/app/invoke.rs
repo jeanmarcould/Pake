@@ -393,7 +393,7 @@ pub fn log_calendar_export(msg: &str) {
 static LAST_CALENDAR_EXPORT_SECS: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_os = "windows")]
-pub fn (app: &AppHandle, force: bool) {
+pub fn trigger_calendar_export(app: &AppHandle, force: bool) {
     let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
