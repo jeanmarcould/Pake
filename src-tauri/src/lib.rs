@@ -538,20 +538,22 @@ pub fn run_app() {
                 crate::app::invoke::log_calendar_export("startup: is_calendar_app=true, scheduling loop");
                 let cal_app = app.app_handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(8)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_secs(12)).await;
                     loop {
                         if let Some(win) = cal_app.get_webview_window("pake") {
+                            #[cfg(target_os = "windows")]
+                            crate::app::invoke::log_calendar_export("loop: triggering webview fetch");
                             let _ = win.eval(
                                 r#"(async () => {
                                     try {
+                                        if (location.hostname !== "calendar.google.com") return;
+                                        const invokeFn = window.__TAURI__?.core?.invoke || window.__TAURI_INTERNALS__?.invoke;
+                                        if (!invokeFn) return;
                                         const res = await fetch("https://calendar.google.com/calendar/u/0/exporticalzip", { credentials: "include" });
                                         if (!res.ok) return;
                                         const buf = await res.arrayBuffer();
                                         const bytes = Array.from(new Uint8Array(buf));
-                                        const invokeFn = window.__TAURI__?.core?.invoke;
-                                        if (invokeFn) {
-                                            await invokeFn("save_gcal_export_zip", { bytes });
-                                        }
+                                        await invokeFn("save_gcal_export_zip", { bytes });
                                     } catch (_) {}
                                 })()"#,
                             );
@@ -595,10 +597,8 @@ pub fn run_app() {
                         crate::app::invoke::set_gmail_low_memory(_window.app_handle(), false);
                         crate::app::invoke::reapply_current_badge(_window.app_handle());
                     }
-                    tauri::WindowEvent::Focused(false) => {
-                        if is_calendar_app {
-                            crate::app::invoke::trigger_calendar_export(_window.app_handle(), false);
-                        }
+                    if is_calendar_app && _window.label() == "pake" {
+                        crate::app::invoke::trigger_calendar_export(_window.app_handle(), false);
                     }
                     _ => {}
                 }
