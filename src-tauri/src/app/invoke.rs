@@ -998,6 +998,11 @@ pub fn reveal_download(app: AppHandle) -> Result<(), String> {
 #[command]
 pub async fn save_gcal_export_zip(app: AppHandle, bytes: Vec<u8>) -> Result<String, String> {
     if bytes.len() < 4 || &bytes[0..2] != b"PK" {
+        #[cfg(target_os = "windows")]
+        log_calendar_export(&format!(
+            "save_gcal_export_zip err: not a zip (len={})",
+            bytes.len()
+        ));
         return Err("Downloaded payload is not a valid ZIP archive".to_string());
     }
 
@@ -1020,6 +1025,12 @@ pub async fn save_gcal_export_zip(app: AppHandle, bytes: Vec<u8>) -> Result<Stri
     tokio::fs::rename(&temp_zip, &target_zip)
         .await
         .map_err(|e| format!("Failed to finalize gcal-export.zip: {e}"))?;
+
+    #[cfg(target_os = "windows")]
+    log_calendar_export(&format!(
+        "save_gcal_export_zip ok: wrote {} bytes",
+        bytes.len()
+    ));
 
     let _ = app;
     Ok(target_zip.to_string_lossy().into_owned())
