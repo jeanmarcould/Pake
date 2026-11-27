@@ -582,6 +582,7 @@ pub fn run_app() {
 
             Ok(())
         })
+    
         .on_window_event(move |_window, _event| {
             if _window.label() == "pake" {
                 match _event {
@@ -597,16 +598,10 @@ pub fn run_app() {
                         crate::app::invoke::set_gmail_low_memory(_window.app_handle(), false);
                         crate::app::invoke::reapply_current_badge(_window.app_handle());
                     }
-                    if is_calendar_app && _window.label() == "pake" {
-                        crate::app::invoke::trigger_calendar_export(_window.app_handle(), false);
-                    }
                     _ => {}
                 }
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = _event {
-                if is_calendar_app && _window.label() == "pake" {
-                    crate::app::invoke::trigger_calendar_export(_window.app_handle(), false);
-                }
                 if remember_url && _window.label() == "pake" {
                     save_last_url(_window.app_handle());
                 }
@@ -646,6 +641,7 @@ pub fn run_app() {
                 // This lets tauri-plugin-window-state save the window position and size
             }
         })
+    
         .build(context)
         .unwrap_or_else(|error| {
             eprintln!("[Pake] Fatal error while building Tauri application: {error}");
