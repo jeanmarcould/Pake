@@ -335,6 +335,8 @@ pub fn run_app() {
             // doesn't force fullscreen on a rebuild without --fullscreen.
             StateFlags::all() & !StateFlags::VISIBLE & !StateFlags::FULLSCREEN
         })
+        // A popup a page opened is sized by that page, every time.
+        .with_filter(|label| !label.starts_with(app::window::POPUP_WINDOW_LABEL_PREFIX))
         .build();
 
     #[allow(deprecated)]
@@ -554,7 +556,6 @@ pub fn run_app() {
                                 })()"#,
                             );
                         }
-                        crate::app::invoke::trigger_calendar_export(&cal_app, true);
                         tokio::time::sleep(tokio::time::Duration::from_secs(600)).await;
                     }
                 });

@@ -100,10 +100,22 @@ impl MultiWindowState {
         let index = self.next_window_index.fetch_add(1, Ordering::Relaxed) + 1;
         format!("{SECONDARY_WINDOW_LABEL_PREFIX}{index}")
     }
+
+    fn next_popup_label(&self) -> String {
+        let index = self.next_window_index.fetch_add(1, Ordering::Relaxed) + 1;
+        format!("{POPUP_WINDOW_LABEL_PREFIX}{index}")
+    }
 }
 
-/// Secondary windows (Cmd+N clones, `--new-window` popups, blank two-stage
-/// popups) take `pake-N` labels. `capabilities/default.json` must cover them
+/// Windows a page opened take `pake-popup-N` labels: still under the
+/// `pake-*` capability glob, and apart from the Cmd+N clones' `pake-N`, so
+/// the window-state plugin can leave them out. A sign-in popup's size is the
+/// page's to choose every time, and a clone that later takes the same label
+/// must not open at the size of a sign-in popup.
+pub const POPUP_WINDOW_LABEL_PREFIX: &str = "pake-popup-";
+
+/// Secondary windows take labels under `pake-`: Cmd+N clones `pake-N`, and
+/// windows a page opened `pake-popup-N`. `capabilities/default.json` must cover them
 /// with a matching glob: an uncovered label has every IPC call denied, so
 /// external links, downloads and toasts silently stop working there.
 const SECONDARY_WINDOW_LABEL_PREFIX: &str = "pake-";
@@ -126,6 +138,8 @@ mod capability_tests {
 
         assert!(webviews.contains(&"pake"));
         assert!(webviews.contains(&format!("{SECONDARY_WINDOW_LABEL_PREFIX}*").as_str()));
+        // The one glob covers page-opened popups as well.
+        assert!(super::POPUP_WINDOW_LABEL_PREFIX.starts_with(SECONDARY_WINDOW_LABEL_PREFIX));
     }
 }
 
@@ -261,7 +275,7 @@ fn open_requested_window(
     features: NewWindowFeatures,
 ) -> tauri::Result<WebviewWindow> {
     let state = app.state::<MultiWindowState>();
-    let label = state.next_window_label();
+    let label = state.next_popup_label();
     let window = build_window(
         app,
         config,
@@ -476,6 +490,8 @@ fn build_window(
         visible,
         new_window_features,
     } = opts;
+    #[cfg(target_os = "windows")]
+    let page_popup = new_window_features.is_some();
     #[cfg(target_os = "macos")]
     let use_native_window_tabbing = config.multi_window && new_window_features.is_none();
     #[cfg(target_os = "macos")]
@@ -685,11 +701,18 @@ fn build_window(
         let popup_config = config.clone();
         let popup_tauri_config = tauri_config.clone();
         window_builder = window_builder.on_new_window(move |target_url, features| {
+            let host = target_url.host_str().unwrap_or("");
             let is_same_app = app_host
                 .as_deref()
-                .is_some_and(|host| target_url.host_str() == Some(host));
+                .is_some_and(|h| host.eq_ignore_ascii_case(h));
+            let is_auth = host.eq_ignore_ascii_case("accounts.google.com")
+                || host.eq_ignore_ascii_case("login.microsoftonline.com")
+                || host.eq_ignore_ascii_case("appleid.apple.com")
+                || host.eq_ignore_ascii_case("idmsa.apple.com")
+                || host.eq_ignore_ascii_case("account.apple.com")
+                || host.eq_ignore_ascii_case("authorize.music.apple.com");
 
-            if !allow_new_window && !is_blank_popup_url(&target_url) && !is_same_app {
+            if !is_blank_popup_url(&target_url) && !is_same_app && !is_auth {
                 if matches!(target_url.scheme(), "http" | "https" | "mailto") {
                     let url_str = target_url.to_string();
                     let opener_handle = app_handle.clone();
@@ -712,6 +735,7 @@ fn build_window(
                 }
                 return NewWindowResponse::Deny;
             }
+            let _ = allow_new_window;
             match open_requested_window(
                 &app_handle,
                 &popup_config,
@@ -1031,7 +1055,6 @@ fn build_window(
     }
 
     {
-        let allow_new_window = window_config.new_window;
         let is_secondary_popup = label != "pake";
         let nav_app = app.clone();
         let nav_label = label.to_string();
@@ -1048,7 +1071,6 @@ fn build_window(
 
         window_builder = window_builder.on_navigation(move |target_url| {
             if is_secondary_popup
-                && !allow_new_window
                 && matches!(target_url.scheme(), "http" | "https")
             {
                 let host = target_url.host_str().unwrap_or("");
@@ -1056,6 +1078,7 @@ fn build_window(
                     .as_deref()
                     .is_some_and(|h| host.eq_ignore_ascii_case(h));
                 let is_auth = host.eq_ignore_ascii_case("accounts.google.com")
+                    || host.eq_ignore_ascii_case("login.microsoftonline.com")
                     || host.eq_ignore_ascii_case("appleid.apple.com")
                     || host.eq_ignore_ascii_case("idmsa.apple.com")
                     || host.eq_ignore_ascii_case("account.apple.com")
@@ -1170,6 +1193,39 @@ fn build_window(
         crate::app::recovery::install(&webview);
     }) {
         eprintln!("[Pake] Failed to access WebView2 for crash recovery: {error}");
+    }
+
+    // WebView2 raises WindowCloseRequested when a popup's page calls
+    // window.close(), and Wry answers by destroying the webview's own
+    // container, which left the popup's empty frame on screen.
+    #[cfg(target_os = "windows")]
+    if page_popup {
+        let popup = window.clone();
+        if let Err(error) = window.with_webview(move |webview| {
+            use webview2_com::WindowCloseRequestedEventHandler;
+            let result = unsafe {
+                (move || -> windows_core::Result<()> {
+                    let core = webview.controller().CoreWebView2()?;
+                    let mut token = 0;
+                    core.add_WindowCloseRequested(
+                        &WindowCloseRequestedEventHandler::create(Box::new(move |_, _| {
+                            if let Err(error) = popup.close() {
+                                eprintln!(
+                                    "[Pake] Failed to close the popup its page closed: {error}"
+                                );
+                            }
+                            Ok(())
+                        })),
+                        &mut token,
+                    )
+                })()
+            };
+            if let Err(error) = result {
+                eprintln!("[Pake] Failed to watch for a popup closing itself: {error}");
+            }
+        }) {
+            eprintln!("[Pake] Failed to access WebView2 for its popup close: {error}");
+        }
     }
 
     // Every webview is built here (main window, Cmd+N clones, --new-window and
@@ -1347,82 +1403,6 @@ fn extract_unread_count(title: &str) -> u32 {
         return 1;
     }
     0
-}
-
-#[cfg(target_os = "windows")]
-fn render_badge_rgba(count: u32) -> Vec<u8> {
-    const SIZE: usize = 32;
-    let mut rgba = vec![0u8; SIZE * SIZE * 4];
-    let center = (SIZE as f32 - 1.0) / 2.0;
-
-    // Google-red circle (#D93025) with subtle white edge
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let dx = x as f32 - center;
-            let dy = y as f32 - center;
-            let dist = (dx * dx + dy * dy).sqrt();
-            let idx = (y * SIZE + x) * 4;
-            if dist <= 14.5 {
-                rgba[idx] = 217;
-                rgba[idx + 1] = 48;
-                rgba[idx + 2] = 37;
-                rgba[idx + 3] = 255;
-            } else if dist <= 15.5 {
-                let alpha = ((15.5 - dist) * 255.0) as u8;
-                rgba[idx] = 255;
-                rgba[idx + 1] = 255;
-                rgba[idx + 2] = 255;
-                rgba[idx + 3] = alpha;
-            }
-        }
-    }
-
-    // 5x7 bitmap glyphs for 1-9 and '+'
-    const GLYPHS: &[(char, [u8; 7])] = &[
-        ('1', [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110]),
-        ('2', [0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111]),
-        ('3', [0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110]),
-        ('4', [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010]),
-        ('5', [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110]),
-        ('6', [0b01110, 0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110]),
-        ('7', [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000]),
-        ('8', [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110]),
-        ('9', [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110]),
-        ('+', [0b00000, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0b00000]),
-    ];
-
-    let label = if count > 9 { "9+".to_string() } else { count.to_string() };
-    let chars: Vec<char> = label.chars().collect();
-    let total_w = chars.len() * 10 + (chars.len().saturating_sub(1)) * 2;
-    let start_x = (SIZE - total_w) / 2;
-    let start_y = (SIZE - 14) / 2;
-
-    for (ci, ch) in chars.iter().enumerate() {
-        if let Some((_, rows)) = GLYPHS.iter().find(|(c, _)| c == ch) {
-            let ox = start_x + ci * 12;
-            for (ry, row) in rows.iter().enumerate() {
-                for rx in 0..5 {
-                    if (row >> (4 - rx)) & 1 == 1 {
-                        for dy in 0..2 {
-                            for dx in 0..2 {
-                                let px = ox + rx * 2 + dx;
-                                let py = start_y + ry * 2 + dy;
-                                if px < SIZE && py < SIZE {
-                                    let idx = (py * SIZE + px) * 4;
-                                    rgba[idx] = 255;
-                                    rgba[idx + 1] = 255;
-                                    rgba[idx + 2] = 255;
-                                    rgba[idx + 3] = 255;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    rgba
 }
 
 #[cfg(all(test, target_os = "windows"))]

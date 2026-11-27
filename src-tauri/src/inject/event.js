@@ -844,6 +844,39 @@ document.addEventListener("DOMContentLoaded", () => {
     originalWindowOpen.call(window, url, "_blank");
   };
 
+  // Cmd-click on macOS and Ctrl-click on Windows and Linux open a link in the
+  // default browser, the app's own site included, as a browser opens one in
+  // a new tab; so does a middle click. Ctrl on macOS is a secondary click and
+  // stays one. A download link keeps downloading, and blob: or data: has no
+  // browser to go to.
+  const opensInBrowser = (e) =>
+    /mac/i.test(getDesktopPlatform()) ? Boolean(e.metaKey) : Boolean(e.ctrlKey);
+
+  const openLinkInBrowser = (e, anchorElement) => {
+    if (!anchorElement || !anchorElement.href || anchorElement.download) {
+      return false;
+    }
+    const rawHref = anchorElement.getAttribute("href") || "";
+    if (shouldBypassPakeLinkHandling(rawHref)) return false;
+    let url;
+    try {
+      url = new URL(anchorElement.href);
+    } catch {
+      return false;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    handleExternalLink(url.href);
+    return true;
+  };
+
+  const openMiddleClickedLink = (e) => {
+    if (e.button !== 1) return;
+    if (!e.target || typeof e.target.closest !== "function") return;
+    openLinkInBrowser(e, e.target.closest("a"));
+  };
+
   const detectAnchorElementClick = (e) => {
     // Safety check: ensure e.target exists and is an Element with closest method
     if (!e.target || typeof e.target.closest !== "function") {
@@ -852,6 +885,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const anchorElement = e.target.closest("a");
 
     if (anchorElement && nativeDownloadAnchors.has(anchorElement)) return;
+
+    if (opensInBrowser(e) && openLinkInBrowser(e, anchorElement)) return;
 
     if (anchorElement && anchorElement.href) {
       const rawHref = anchorElement.getAttribute("href") || "";
@@ -941,6 +976,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Capture web links before site popup handlers route them into the app.
   document.addEventListener("click", detectAnchorElementClick, true);
+  document.addEventListener("auxclick", openMiddleClickedLink, true);
 
   // Rewrite the window.open function.
   const originalWindowOpen = window.open;
@@ -1100,64 +1136,6 @@ document.addEventListener("DOMContentLoaded", () => {
       bridgedShowNotification.__pakeBridged = true;
       ServiceWorkerRegistration.prototype.showNotification = bridgedShowNotification;
     }
-  }
-
-  // Deduplicate repeated/child-window notifications for the same event within 15 seconds
-  if (typeof window.Notification === "function" && !window.Notification.__pakeDeduped) {
-    const OrigNotification = window.Notification;
-    const DEDUP_STORAGE_KEY = "__pake_notif_dedup_v1";
-    const DEDUP_WINDOW_MS = 15000;
-
-    const shouldSuppressNotification = (title, options) => {
-      try {
-        const now = Date.now();
-        const tag = options && options.tag ? String(options.tag) : "";
-        const body = options && options.body ? String(options.body) : "";
-        const key = tag ? `tag:${tag}` : `msg:${String(title || "")}::${body}`;
-
-        const raw = localStorage.getItem(DEDUP_STORAGE_KEY);
-        const cache = raw ? JSON.parse(raw) : {};
-        for (const k of Object.keys(cache)) {
-          if (now - cache[k] > DEDUP_WINDOW_MS) {
-            delete cache[k];
-          }
-        }
-
-        if (cache[key] && now - cache[key] < DEDUP_WINDOW_MS) {
-          localStorage.setItem(DEDUP_STORAGE_KEY, JSON.stringify(cache));
-          return true;
-        }
-
-        cache[key] = now;
-        localStorage.setItem(DEDUP_STORAGE_KEY, JSON.stringify(cache));
-      } catch (_) {
-        // Ignore storage errors and allow notification through
-      }
-      return false;
-    };
-
-    const DedupedNotification = function (title, options) {
-      if (shouldSuppressNotification(title, options)) {
-        return {
-          title: String(title || ""),
-          close() {},
-          addEventListener() {},
-          removeEventListener() {},
-          dispatchEvent() { return false; },
-        };
-      }
-      return new OrigNotification(title, options);
-    };
-
-    DedupedNotification.prototype = OrigNotification.prototype;
-    Object.defineProperty(DedupedNotification, "permission", {
-      get: () => OrigNotification.permission,
-    });
-    if (typeof OrigNotification.requestPermission === "function") {
-      DedupedNotification.requestPermission = OrigNotification.requestPermission.bind(OrigNotification);
-    }
-    DedupedNotification.__pakeDeduped = true;
-    window.Notification = DedupedNotification;
   }
 
   // Set the default zoom, There are problems with Loop without using try-catch.
